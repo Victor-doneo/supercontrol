@@ -150,12 +150,16 @@
 <div class="auth-screen" id="authScreen">
   <div class="auth-card">
     <h1>Réception de lots</h1>
-    <p>Accès réservé à l'équipe. Entrez votre email professionnel pour recevoir un lien de connexion.</p>
+    <p>Accès réservé à l'équipe. Connectez-vous avec les identifiants qui vous ont été communiqués.</p>
     <div class="field">
       <label for="authEmail">Email</label>
       <input id="authEmail" type="email" placeholder="prenom@entreprise.com" autocomplete="email">
     </div>
-    <button class="btn btn-primary" id="authSendBtn">Recevoir le lien de connexion</button>
+    <div class="field">
+      <label for="authPassword">Mot de passe</label>
+      <input id="authPassword" type="password" placeholder="••••••••" autocomplete="current-password">
+    </div>
+    <button class="btn btn-primary" id="authSendBtn">Se connecter</button>
     <div id="authMsg" class="auth-msg"></div>
   </div>
 </div>
@@ -306,29 +310,23 @@
 
   const $ = (id) => document.getElementById(id);
 
-  function currentRedirectUrl(){
-    return window.location.origin + window.location.pathname;
-  }
-
   $("authSendBtn").addEventListener("click", async () => {
     const email = $("authEmail").value.trim();
+    const password = $("authPassword").value;
     const msg = $("authMsg");
-    if(!email){ msg.textContent = "Entrez votre email."; return; }
+    if(!email || !password){ msg.textContent = "Entrez votre email et votre mot de passe."; return; }
     $("authSendBtn").disabled = true;
-    msg.textContent = "Envoi en cours…";
-    const { error } = await sb.auth.signInWithOtp({
-      email,
-      options: { shouldCreateUser: false, emailRedirectTo: currentRedirectUrl() }
-    });
+    msg.textContent = "Connexion…";
+    const { error } = await sb.auth.signInWithPassword({ email, password });
     $("authSendBtn").disabled = false;
     if(error){
-      msg.textContent = "Impossible d'envoyer le lien. Si votre email n'a pas été invité par l'administrateur, contactez-le.";
+      msg.textContent = "Email ou mot de passe incorrect.";
     } else {
-      msg.textContent = "Lien envoyé — ouvrez votre boîte mail et cliquez sur le lien pour vous connecter.";
+      msg.textContent = "";
     }
   });
 
-  $("authEmail").addEventListener("keydown", (e) => {
+  $("authPassword").addEventListener("keydown", (e) => {
     if(e.key === "Enter"){ $("authSendBtn").click(); }
   });
 
