@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Réception de lots</title>
+<style>
+  :root{
+    --bg:#1B1F24;
+    --panel:#242A31;
+    --panel-alt:#2E353D;
+    --line:#3A424B;
+    --text:#ECEFF2;
+    --text-dim:#97A2AC;
+    --accent:#FFB020;
+    --accent-dim:#6B5324;
+    --success:#49B87B;
+    --success-dim:#274430;
+    --danger:#E2574C;
+    --danger-dim:#4A2622;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--sans);}
+  body{-webkit-tap-highlight-color:transparent;}
+  button, input, select, textarea{font-family:inherit;}
+  .app{max-width:520px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column;}
+
+  /* Top bar */
+  .topbar{padding:16px 16px 0 16px;}
+  .brand{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px;}
+  .brand h1{font-size:15px;letter-spacing:.02em;margin:0;font-weight:700;color:var(--text);}
+  .brand small{color:var(--text-dim);font-size:12px;}
+
+  .switcher{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:3px;gap:3px;}
+  .switcher button{flex:1;border:none;background:transparent;color:var(--text-dim);padding:10px 0;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:background .15s,color .15s;}
+  .switcher button.active{background:var(--accent);color:#1B1F24;}
+
+  .content{flex:1;padding:16px;padding-bottom:40px;}
+  .hidden{display:none !important;}
+
+  /* Cards */
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px;}
+  .card h2{font-size:13px;text-transform:none;margin:0 0 12px 0;color:var(--text-dim);font-weight:600;}
+  .row{display:flex;gap:10px;}
+  .field{flex:1;display:flex;flex-direction:column;gap:6px;margin-bottom:12px;}
+  .field label{font-size:12px;color:var(--text-dim);}
+  .field input, .field select, .field textarea{
+    background:var(--panel-alt);border:1px solid var(--line);border-radius:8px;color:var(--text);
+    padding:11px 12px;font-size:15px;outline:none;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus{border-color:var(--accent);}
+
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:none;border-radius:9px;
+    padding:12px 16px;font-size:14px;font-weight:600;cursor:pointer;width:100%;}
+  .btn-primary{background:var(--accent);color:#1B1F24;}
+  .btn-primary:active{background:#e0a01c;}
+  .btn-secondary{background:var(--panel-alt);color:var(--text);border:1px solid var(--line);}
+  .btn-success{background:var(--success);color:#0d1f15;}
+  .btn-danger{background:var(--danger);color:#2b0d0a;}
+  .btn-ghost{background:transparent;color:var(--text-dim);border:1px solid var(--line);}
+  .btn[disabled]{opacity:.4;cursor:not-allowed;}
+  .btn-row{display:flex;gap:10px;}
+  .btn-row .btn{flex:1;}
+
+  /* Lot header on scan tab */
+  .lot-banner{display:flex;justify-content:space-between;align-items:center;background:var(--panel-alt);
+    border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:14px;}
+  .lot-banner .who{font-size:14px;font-weight:600;}
+  .lot-banner .when{font-size:12px;color:var(--text-dim);margin-top:2px;}
+  .lot-banner a{color:var(--accent);font-size:12px;text-decoration:none;font-weight:600;cursor:pointer;}
+
+  /* Scanner */
+  .scan-box{position:relative;width:100%;aspect-ratio:1/1;background:#000;border-radius:14px;overflow:hidden;
+    border:1px solid var(--line);margin-bottom:12px;}
+  .scan-box video{width:100%;height:100%;object-fit:cover;}
+  .scan-frame{position:absolute;inset:14%;border:2px solid transparent;pointer-events:none;}
+  .scan-frame::before, .scan-frame::after, .scan-frame b::before, .scan-frame b::after{
+    content:"";position:absolute;width:26px;height:26px;border-color:var(--accent);border-style:solid;
+  }
+  .scan-frame::before{top:-2px;left:-2px;border-width:3px 0 0 3px;border-top-left-radius:6px;}
+  .scan-frame::after{top:-2px;right:-2px;border-width:3px 3px 0 0;border-top-right-radius:6px;}
+  .scan-frame b::before{bottom:-2px;left:-2px;border-width:0 0 3px 3px;border-bottom-left-radius:6px;position:absolute;}
+  .scan-frame b::after{bottom:-2px;right:-2px;border-width:0 3px 3px 0;border-bottom-right-radius:6px;position:absolute;}
+  .scan-flash{position:absolute;inset:0;background:var(--success);opacity:0;transition:opacity .1s;}
+  .scan-flash.on{opacity:.35;}
+  .scan-placeholder{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    color:var(--text-dim);font-size:13px;text-align:center;padding:20px;}
+  .scan-status{font-size:13px;color:var(--text-dim);text-align:center;margin-bottom:12px;min-height:18px;}
+  .scan-status.ok{color:var(--success);font-weight:600;}
+
+  .manual-row{display:flex;gap:8px;margin-bottom:4px;}
+  .manual-row input{flex:1;}
+  .manual-row button{width:auto;padding:11px 16px;}
+
+  /* Manifest list */
+  .manifest{margin-top:16px;}
+  .manifest-title{font-size:12px;color:var(--text-dim);margin-bottom:8px;display:flex;justify-content:space-between;}
+  .item-row{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--panel-alt);
+    border:1px solid var(--line);border-radius:8px;margin-bottom:6px;}
+  .item-ref{font-family:var(--mono);font-size:14px;}
+  .item-meta{font-size:11px;color:var(--text-dim);margin-top:2px;}
+  .item-qty{font-family:var(--mono);font-weight:700;background:var(--accent-dim);color:var(--accent);
+    border-radius:6px;padding:3px 9px;font-size:13px;min-width:28px;text-align:center;}
+  .empty{color:var(--text-dim);font-size:13px;text-align:center;padding:24px 10px;}
+
+  /* Lot list (control tab) */
+  .lot-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:10px;cursor:pointer;}
+  .lot-card:active{background:var(--panel-alt);}
+  .lot-card-top{display:flex;justify-content:space-between;align-items:flex-start;}
+  .lot-card .who{font-size:15px;font-weight:700;}
+  .lot-card .when{font-size:12px;color:var(--text-dim);margin-top:2px;}
+  .lot-card .count{font-size:12px;color:var(--text-dim);margin-top:8px;}
+  .badge{font-size:11px;font-weight:700;padding:4px 9px;border-radius:100px;white-space:nowrap;}
+  .badge-open{background:var(--panel-alt);color:var(--text-dim);border:1px solid var(--line);}
+  .badge-ok{background:var(--success-dim);color:var(--success);}
+  .badge-issue{background:var(--danger-dim);color:var(--danger);}
+
+  .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--text-dim);font-size:13px;
+    background:none;border:none;cursor:pointer;padding:4px 0;margin-bottom:10px;}
+  .detail-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;}
+  .detail-header .who{font-size:18px;font-weight:700;}
+  .detail-header .when{font-size:13px;color:var(--text-dim);margin-top:2px;}
+
+  .anomaly-row{padding:10px 12px;background:var(--danger-dim);border:1px solid #6b352d;border-radius:8px;margin-bottom:8px;}
+  .anomaly-row .a-top{display:flex;justify-content:space-between;font-size:12px;color:var(--danger);font-weight:700;margin-bottom:4px;}
+  .anomaly-row .a-ref{font-family:var(--mono);font-size:14px;}
+  .anomaly-row .a-note{font-size:12px;color:var(--text-dim);margin-top:4px;}
+
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--text);color:#1B1F24;
+    padding:10px 18px;border-radius:100px;font-size:13px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.35);
+    opacity:0;pointer-events:none;transition:opacity .2s, transform .2s;z-index:50;}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+  ::placeholder{color:#5c6570;}
+
+  /* Auth screen */
+  .auth-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
+  .auth-card{max-width:380px;width:100%;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:26px 22px;}
+  .auth-card h1{font-size:18px;margin:0 0 10px 0;}
+  .auth-card p{font-size:13px;color:var(--text-dim);line-height:1.5;margin:0 0 18px 0;}
+  .auth-msg{font-size:13px;color:var(--text-dim);margin-top:12px;min-height:18px;}
+  .logout-btn{background:none;border:1px solid var(--line);color:var(--text-dim);font-size:11px;
+    padding:5px 10px;border-radius:100px;cursor:pointer;}
+</style>
+</head>
+<body>
+
+<div class="auth-screen" id="authScreen">
+  <div class="auth-card">
+    <h1>Réception de lots</h1>
+    <p>Accès réservé à l'équipe. Entrez votre email professionnel pour recevoir un lien de connexion.</p>
+    <div class="field">
+      <label for="authEmail">Email</label>
+      <input id="authEmail" type="email" placeholder="prenom@entreprise.com" autocomplete="email">
+    </div>
+    <button class="btn btn-primary" id="authSendBtn">Recevoir le lien de connexion</button>
+    <div id="authMsg" class="auth-msg"></div>
+  </div>
+</div>
+
+<div class="app hidden" id="appRoot">
+  <div class="topbar">
+    <div class="brand">
+      <h1>Réception de lots</h1>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <small id="syncLabel">chargement…</small>
+        <button id="logoutBtn" class="logout-btn" title="Se déconnecter">Déconnexion</button>
+      </div>
+    </div>
+    <div class="switcher">
+      <button id="tabScanBtn" class="active">Scanner</button>
+      <button id="tabControlBtn">Contrôle</button>
+    </div>
+  </div>
+
+  <div class="content">
+    <!-- SCAN VIEW -->
+    <div id="viewScan">
+      <div id="noLotCard" class="card">
+        <h2>Démarrer un nouveau lot</h2>
+        <div class="field">
+          <label for="inChauffeur">Chauffeur</label>
+          <input id="inChauffeur" type="text" placeholder="Nom du chauffeur">
+        </div>
+        <div class="field">
+          <label for="inDate">Date du lot</label>
+          <input id="inDate" type="date">
+        </div>
+        <button class="btn btn-primary" id="startLotBtn">Démarrer la réception</button>
+      </div>
+
+      <div id="activeLotBlock" class="hidden">
+        <div class="lot-banner">
+          <div>
+            <div class="who" id="activeWho">—</div>
+            <div class="when" id="activeWhen">—</div>
+          </div>
+          <a id="closeLotLink">Changer de lot</a>
+        </div>
+
+        <div class="card">
+          <div class="scan-box" id="scanBox">
+            <video id="video" playsinline muted></video>
+            <div class="scan-frame"><b></b></div>
+            <div class="scan-flash" id="scanFlash"></div>
+            <div class="scan-placeholder" id="scanPlaceholder">Appuyez sur « Activer la caméra » pour scanner</div>
+          </div>
+          <div class="scan-status" id="scanStatus"></div>
+          <button class="btn btn-secondary" id="camToggleBtn">Activer la caméra</button>
+        </div>
+
+        <div class="card">
+          <h2>Saisie manuelle (si le scan ne fonctionne pas)</h2>
+          <div class="manual-row">
+            <input id="manualRef" type="text" placeholder="Référence produit">
+            <button class="btn btn-primary" id="manualAddBtn">Ajouter</button>
+          </div>
+        </div>
+
+        <div class="manifest">
+          <div class="manifest-title"><span>Articles reçus</span><span id="totalCount">0</span></div>
+          <div id="itemsList"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONTROL VIEW -->
+    <div id="viewControl" class="hidden">
+      <div id="lotsListWrap">
+        <h2 style="font-size:13px;color:var(--text-dim);margin:0 0 12px 0;">Lots à contrôler</h2>
+        <div id="lotsList"></div>
+      </div>
+
+      <div id="lotDetailWrap" class="hidden">
+        <button class="back-link" id="backToListBtn">‹ Retour aux lots</button>
+        <div class="detail-header">
+          <div>
+            <div class="who" id="detWho">—</div>
+            <div class="when" id="detWhen">—</div>
+          </div>
+          <span class="badge" id="detBadge">—</span>
+        </div>
+
+        <div class="card">
+          <h2>Articles reçus</h2>
+          <div id="detItemsList"></div>
+        </div>
+
+        <div class="card">
+          <h2>Signaler une anomalie</h2>
+          <div class="field">
+            <label for="anType">Type</label>
+            <select id="anType">
+              <option value="manquant">Manquant</option>
+              <option value="inattendu">Unité inattendue</option>
+            </select>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="anRef">Référence</label>
+              <input id="anRef" type="text" placeholder="Ex: SKU-1234">
+            </div>
+            <div class="field" style="max-width:110px;">
+              <label for="anQty">Quantité</label>
+              <input id="anQty" type="number" min="1" value="1">
+            </div>
+          </div>
+          <div class="field">
+            <label for="anNote">Note (optionnel)</label>
+            <textarea id="anNote" rows="2" placeholder="Détails utiles…"></textarea>
+          </div>
+          <button class="btn btn-danger" id="addAnomalyBtn">Signaler l'anomalie</button>
+        </div>
+
+        <div class="card" id="anomaliesCard">
+          <h2>Anomalies signalées</h2>
+          <div id="anomaliesList"></div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-success" id="markCompleteBtn">✓ Lot complet</button>
+          <button class="btn btn-danger" id="markIssueBtn">⚠ Clôturer avec anomalies</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ---------- Supabase client + auth ----------
+  // Remplissez ces deux constantes avec les infos de votre projet Supabase :
+  // Project Settings -> API -> Project URL / anon public key.
+  const SUPABASE_URL = "https://rhedekojalamzsvcmaub.supabase.co";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJoZWRla29qYWxhbXpzdmNtYXViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg0NTIwMTAsImV4cCI6MjEwNDAyODAxMH0.iVRpuQgbfD1XYLcY5PeGRstlFImjv2iWEurOcD9B2NI";
+
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  const $ = (id) => document.getElementById(id);
+
+  function currentRedirectUrl(){
+    return window.location.origin + window.location.pathname;
+  }
+
+  $("authSendBtn").addEventListener("click", async () => {
+    const email = $("authEmail").value.trim();
+    const msg = $("authMsg");
+    if(!email){ msg.textContent = "Entrez votre email."; return; }
+    $("authSendBtn").disabled = true;
+    msg.textContent = "Envoi en cours…";
+    const { error } = await sb.auth.signInWithOtp({
+      email,
+      options: { shouldCreateUser: false, emailRedirectTo: currentRedirectUrl() }
+    });
+    $("authSendBtn").disabled = false;
+    if(error){
+      msg.textContent = "Impossible d'envoyer le lien. Si votre email n'a pas été invité par l'administrateur, contactez-le.";
+    } else {
+      msg.textContent = "Lien envoyé — ouvrez votre boîte mail et cliquez sur le lien pour vous connecter.";
+    }
+  });
+
+  $("authEmail").addEventListener("keydown", (e) => {
+    if(e.key === "Enter"){ $("authSendBtn").click(); }
+  });
+
+  $("logoutBtn").addEventListener("click", () => sb.auth.signOut());
+
+  function showAuthScreen(){
+    $("authScreen").classList.remove("hidden");
+    $("appRoot").classList.add("hidden");
+  }
+
+  let appStarted = false;
+  function onAuthed(){
+    $("authScreen").classList.add("hidden");
+    $("appRoot").classList.remove("hidden");
+    if(!appStarted){ appStarted = true; init(); }
+  }
+
+  async function initAuth(){
+    const { data: { session } } = await sb.auth.getSession();
+    if(session){ onAuthed(); } else { showAuthScreen(); }
+    sb.auth.onAuthStateChange((_event, session) => {
+      if(session){ onAuthed(); } else { showAuthScreen(); appStarted = false; }
+    });
+  }
+
+  // ---------- Storage helpers (Supabase table, protected by RLS + auth) ----------
+  // If Supabase is unreachable, fall back to an in-memory store so the app stays
+  // usable for a single session — nothing is shared or kept after closing then.
+  let storageMode = "remote"; // 'remote' | 'memory'
+  let storageErrorMsg = "";
+  const memoryStore = {};
+
+  async function storeGet(key){
+    if(storageMode === "memory"){
+      return memoryStore.hasOwnProperty(key) ? memoryStore[key] : null;
+    }
+    try{
+      const { data, error } = await sb.from("storage_kv").select("value").eq("key", key).maybeSingle();
+      if(error) throw error;
+      return data ? data.value : null;
+    }catch(e){
+      console.error("storage get failed", e);
+      storageErrorMsg = (e && e.message) ? e.message : String(e);
+      downgradeStorage("memory");
+      return memoryStore.hasOwnProperty(key) ? memoryStore[key] : null;
+    }
+  }
+
+  async function storeSet(key, value){
+    if(storageMode === "memory"){
+      memoryStore[key] = value;
+      return true;
+    }
+    try{
+      const { error } = await sb.from("storage_kv").upsert({ key, value }, { onConflict: "key" });
+      if(error) throw error;
+      return true;
+    }catch(e){
+      console.error("storage set failed", e);
+      storageErrorMsg = (e && e.message) ? e.message : String(e);
+      downgradeStorage("memory");
+      memoryStore[key] = value;
+      return true;
+    }
+  }
+
+  function downgradeStorage(mode){
+    if(storageMode === mode) return;
+    storageMode = mode;
+    const label = $("syncLabel");
+    if(mode === "memory"){
+      if(label){ label.textContent = "mode local (non sauvegardé)"; label.style.color = "var(--danger)"; }
+      showStorageBanner("Connexion à la base de données impossible — les données saisies ici ne seront ni partagées ni conservées après fermeture.");
+    }
+  }
+
+  function showStorageBanner(message){
+    let b = document.getElementById("storageBanner");
+    if(!b){
+      b = document.createElement("div");
+      b.id = "storageBanner";
+      b.style.cssText = "background:var(--danger-dim);color:var(--danger);border:1px solid #6b352d;border-radius:10px;padding:10px 14px;margin:0 16px 12px 16px;font-size:12px;";
+      const topbar = document.querySelector("#appRoot .topbar");
+      topbar.insertAdjacentElement("afterend", b);
+    }
+    b.innerHTML = escapeHtml(message) + "<br><span style='opacity:.8'>Détail technique : " + escapeHtml(storageErrorMsg || "inconnu") + "</span>";
+  }
+
+  const LOTS_INDEX_KEY = "lots-index";
+  function lotKey(id){ return "lot:" + id; }
+
+  // ---------- App state ----------
+  let lotsIndex = [];      // [{id, chauffeur, date, createdAt, status}]
+  let activeLotId = null;  // lot currently being scanned
+  let currentLot = null;   // full object of active/viewed lot
+  let currentTab = "scan"; // 'scan' | 'control'
+  let controlView = "list";// 'list' | 'detail'
+  let stream = null, rafId = null, lastScanTime = 0, lastScanRef = null;
+
+  function toast(msg){
+    const t = $("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toast._h);
+    toast._h = setTimeout(()=>t.classList.remove("show"), 1800);
+  }
+
+  function fmtDate(d){
+    try{
+      const dt = new Date(d + "T00:00:00");
+      return dt.toLocaleDateString("fr-FR", {day:"2-digit", month:"long", year:"numeric"});
+    }catch(e){ return d; }
+  }
+  function fmtTime(ts){
+    try{ return new Date(ts).toLocaleTimeString("fr-FR", {hour:"2-digit", minute:"2-digit"}); }
+    catch(e){ return ""; }
+  }
+  function todayStr(){
+    const d = new Date();
+    return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+  }
+
+  // ---------- Init ----------
+  async function init(){
+    $("inDate").value = todayStr();
+    const idx = await storeGet(LOTS_INDEX_KEY);
+    lotsIndex = idx || [];
+    if(storageMode === "remote"){ $("syncLabel").textContent = "synchronisé"; }
+    renderLotsList();
+  }
+
+  // ---------- Tabs ----------
+  $("tabScanBtn").addEventListener("click", () => switchTab("scan"));
+  $("tabControlBtn").addEventListener("click", () => switchTab("control"));
+
+  function switchTab(tab){
+    currentTab = tab;
+    $("tabScanBtn").classList.toggle("active", tab==="scan");
+    $("tabControlBtn").classList.toggle("active", tab==="control");
+    $("viewScan").classList.toggle("hidden", tab!=="scan");
+    $("viewControl").classList.toggle("hidden", tab!=="control");
+    if(tab!=="scan") stopCamera();
+    if(tab==="control"){
+      controlView = "list";
+      $("lotsListWrap").classList.remove("hidden");
+      $("lotDetailWrap").classList.add("hidden");
+      refreshLotsListLive();
+    }
+  }
+
+  // ---------- Start / switch lot ----------
+  $("startLotBtn").addEventListener("click", async () => {
+    const chauffeur = $("inChauffeur").value.trim();
+    const date = $("inDate").value;
+    if(!chauffeur){ toast("Indiquez le nom du chauffeur"); return; }
+    if(!date){ toast("Indiquez une date"); return; }
+
+    const id = "lot_" + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+    const lot = {
+      id, chauffeur, date, createdAt: Date.now(),
+      finalStatus: null, // null | 'complet' | 'anomalies'
+      items: [], anomalies: []
+    };
+    const ok = await storeSet(lotKey(id), lot);
+    if(!ok){ toast("Erreur de sauvegarde, réessayez"); return; }
+
+    lotsIndex.unshift({id, chauffeur, date, createdAt: lot.createdAt, status: null});
+    await storeSet(LOTS_INDEX_KEY, lotsIndex);
+
+    activeLotId = id;
+    currentLot = lot;
+    $("inChauffeur").value = "";
+    showActiveLot();
+  });
+
+  $("closeLotLink").addEventListener("click", () => {
+    stopCamera();
+    activeLotId = null; currentLot = null;
+    $("activeLotBlock").classList.add("hidden");
+    $("noLotCard").classList.remove("hidden");
+  });
+
+  function showActiveLot(){
+    $("noLotCard").classList.add("hidden");
+    $("activeLotBlock").classList.remove("hidden");
+    $("activeWho").textContent = currentLot.chauffeur;
+    $("activeWhen").textContent = fmtDate(currentLot.date);
+    renderItems();
+  }
+
+  // ---------- Adding items ----------
+  async function addReference(ref){
+    if(!ref || !currentLot) return;
+    ref = ref.trim();
+    if(!ref) return;
+    const now = Date.now();
+    const existing = currentLot.items.find(i => i.ref === ref);
+    if(existing){
+      existing.qty += 1;
+      existing.lastScan = now;
+    } else {
+      currentLot.items.unshift({ref, qty:1, firstScan:now, lastScan:now});
+    }
+    renderItems();
+    const ok = await storeSet(lotKey(currentLot.id), currentLot);
+    if(!ok) toast("Non sauvegardé — vérifiez la connexion");
+  }
+
+  $("manualAddBtn").addEventListener("click", () => {
+    const v = $("manualRef").value;
+    addReference(v);
+    $("manualRef").value = "";
+    $("manualRef").focus();
+  });
+  $("manualRef").addEventListener("keydown", (e) => {
+    if(e.key === "Enter"){ $("manualAddBtn").click(); }
+  });
+
+  function renderItems(){
+    const list = $("itemsList");
+    const items = currentLot ? currentLot.items : [];
+    $("totalCount").textContent = items.reduce((s,i)=>s+i.qty,0);
+    if(items.length === 0){
+      list.innerHTML = '<div class="empty">Aucun article scanné pour l\'instant</div>';
+      return;
+    }
+    list.innerHTML = items.map(i => `
+      <div class="item-row">
+        <div>
+          <div class="item-ref">${escapeHtml(i.ref)}</div>
+          <div class="item-meta">Dernier scan ${fmtTime(i.lastScan)}</div>
+        </div>
+        <div class="item-qty">×${i.qty}</div>
+      </div>
+    `).join("");
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+
+  // ---------- Camera / QR scanning ----------
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d", {willReadFrequently:true});
+
+  $("camToggleBtn").addEventListener("click", () => {
+    if(stream){ stopCamera(); } else { startCamera(); }
+  });
+
+  async function startCamera(){
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+      const video = $("video");
+      video.srcObject = stream;
+      await video.play();
+      $("scanPlaceholder").classList.add("hidden");
+      $("camToggleBtn").textContent = "Désactiver la caméra";
+      $("scanStatus").textContent = "Visez le QR code du produit";
+      $("scanStatus").className = "scan-status";
+      tick();
+    }catch(e){
+      toast("Caméra indisponible sur cet appareil");
+      $("scanPlaceholder").textContent = "Caméra indisponible — utilisez la saisie manuelle ci-dessous";
+    }
+  }
+
+  function stopCamera(){
+    if(rafId) cancelAnimationFrame(rafId);
+    rafId = null;
+    if(stream){
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+    }
+    $("camToggleBtn").textContent = "Activer la caméra";
+    $("scanPlaceholder").textContent = "Appuyez sur « Activer la caméra » pour scanner";
+    $("scanPlaceholder").classList.remove("hidden");
+    $("scanStatus").textContent = "";
+  }
+
+  function tick(){
+    const video = $("video");
+    if(video.readyState === video.HAVE_ENOUGH_DATA){
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = window.jsQR ? window.jsQR(imageData.data, imageData.width, imageData.height) : null;
+      if(code && code.data){
+        handleScanResult(code.data);
+      }
+    }
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function handleScanResult(data){
+    const now = Date.now();
+    if(data === lastScanRef && (now - lastScanTime) < 1500) return; // debounce duplicates
+    lastScanRef = data; lastScanTime = now;
+
+    flashScan();
+    if(navigator.vibrate) navigator.vibrate(60);
+    addReference(data);
+    $("scanStatus").textContent = "Ajouté : " + data;
+    $("scanStatus").className = "scan-status ok";
+    setTimeout(() => {
+      if($("scanStatus").classList.contains("ok")){
+        $("scanStatus").textContent = "Visez le QR code du produit";
+        $("scanStatus").className = "scan-status";
+      }
+    }, 1400);
+  }
+
+  function flashScan(){
+    const f = $("scanFlash");
+    f.classList.add("on");
+    setTimeout(()=>f.classList.remove("on"), 150);
+  }
+
+  // ---------- Control tab: lots list ----------
+  function statusBadge(status){
+    if(status === "complet") return '<span class="badge badge-ok">Complet</span>';
+    if(status === "anomalies") return '<span class="badge badge-issue">Anomalies</span>';
+    return '<span class="badge badge-open">À contrôler</span>';
+  }
+
+  function renderLotsList(){
+    const wrap = $("lotsList");
+    if(!lotsIndex.length){
+      wrap.innerHTML = '<div class="empty">Aucun lot pour l\'instant. Démarrez une réception dans l\'onglet Scanner.</div>';
+      return;
+    }
+    const sorted = [...lotsIndex].sort((a,b)=>b.createdAt - a.createdAt);
+    wrap.innerHTML = sorted.map(l => `
+      <div class="lot-card" data-id="${l.id}">
+        <div class="lot-card-top">
+          <div>
+            <div class="who">${escapeHtml(l.chauffeur)}</div>
+            <div class="when">${fmtDate(l.date)}</div>
+          </div>
+          ${statusBadge(l.status)}
+        </div>
+      </div>
+    `).join("");
+    wrap.querySelectorAll(".lot-card").forEach(card => {
+      card.addEventListener("click", () => openLotDetail(card.dataset.id));
+    });
+  }
+
+  async function refreshLotsListLive(){
+    const idx = await storeGet(LOTS_INDEX_KEY);
+    if(idx){ lotsIndex = idx; }
+    renderLotsList();
+  }
+
+  $("backToListBtn").addEventListener("click", () => {
+    controlView = "list";
+    $("lotsListWrap").classList.remove("hidden");
+    $("lotDetailWrap").classList.add("hidden");
+    refreshLotsListLive();
+  });
+
+  let detailLot = null;
+
+  async function openLotDetail(id){
+    const lot = await storeGet(lotKey(id));
+    if(!lot){ toast("Lot introuvable"); return; }
+    detailLot = lot;
+    controlView = "detail";
+    $("lotsListWrap").classList.add("hidden");
+    $("lotDetailWrap").classList.remove("hidden");
+    renderLotDetail();
+  }
+
+  function renderLotDetail(){
+    const lot = detailLot;
+    $("detWho").textContent = lot.chauffeur;
+    $("detWhen").textContent = fmtDate(lot.date);
+    $("detBadge").outerHTML = statusBadge(lot.finalStatus).replace('class="badge', 'id="detBadge" class="badge');
+
+    const items = $("detItemsList");
+    if(!lot.items.length){
+      items.innerHTML = '<div class="empty">Aucun article scanné dans ce lot</div>';
+    } else {
+      items.innerHTML = lot.items.map(i => `
+        <div class="item-row">
+          <div>
+            <div class="item-ref">${escapeHtml(i.ref)}</div>
+            <div class="item-meta">Premier scan ${fmtTime(i.firstScan)} · dernier ${fmtTime(i.lastScan)}</div>
+          </div>
+          <div class="item-qty">×${i.qty}</div>
+        </div>
+      `).join("");
+    }
+
+    const anCard = $("anomaliesCard");
+    const anList = $("anomaliesList");
+    if(!lot.anomalies.length){
+      anCard.classList.add("hidden");
+    } else {
+      anCard.classList.remove("hidden");
+      anList.innerHTML = lot.anomalies.map(a => `
+        <div class="anomaly-row">
+          <div class="a-top"><span>${a.type === "manquant" ? "Manquant" : "Unité inattendue"}</span><span>${fmtTime(a.createdAt)}</span></div>
+          <div class="a-ref">${escapeHtml(a.ref)} ${a.qty && a.type === "manquant" ? "· qté " + a.qty : ""}</div>
+          ${a.note ? `<div class="a-note">${escapeHtml(a.note)}</div>` : ""}
+        </div>
+      `).join("");
+    }
+  }
+
+  $("addAnomalyBtn").addEventListener("click", async () => {
+    const type = $("anType").value;
+    const ref = $("anRef").value.trim();
+    const qty = parseInt($("anQty").value, 10) || 1;
+    const note = $("anNote").value.trim();
+    if(!ref){ toast("Indiquez une référence"); return; }
+
+    detailLot.anomalies.unshift({
+      id: "an_" + Date.now().toString(36),
+      type, ref, qty, note, createdAt: Date.now()
+    });
+    renderLotDetail();
+    $("anRef").value = ""; $("anQty").value = "1"; $("anNote").value = "";
+
+    const ok = await storeSet(lotKey(detailLot.id), detailLot);
+    if(!ok) toast("Non sauvegardé — vérifiez la connexion");
+    else toast("Anomalie enregistrée");
+  });
+
+  $("markCompleteBtn").addEventListener("click", async () => {
+    if(detailLot.anomalies.length && !confirm("Des anomalies sont enregistrées sur ce lot. Le marquer complet quand même ?")){
+      return;
+    }
+    detailLot.finalStatus = "complet";
+    await finalizeLot();
+  });
+
+  $("markIssueBtn").addEventListener("click", async () => {
+    if(!detailLot.anomalies.length){
+      toast("Ajoutez au moins une anomalie avant de clôturer");
+      return;
+    }
+    detailLot.finalStatus = "anomalies";
+    await finalizeLot();
+  });
+
+  async function finalizeLot(){
+    renderLotDetail();
+    await storeSet(lotKey(detailLot.id), detailLot);
+    const idxEntry = lotsIndex.find(l => l.id === detailLot.id);
+    if(idxEntry) idxEntry.status = detailLot.finalStatus;
+    await storeSet(LOTS_INDEX_KEY, lotsIndex);
+    toast(detailLot.finalStatus === "complet" ? "Lot validé complet" : "Lot clôturé avec anomalies");
+  }
+
+  initAuth();
+})();
+</script>
+</body>
+</html>
