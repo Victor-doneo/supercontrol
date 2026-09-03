@@ -89,6 +89,7 @@
     color:var(--text-dim);font-size:13px;text-align:center;padding:20px;}
   .scan-status{font-size:13px;color:var(--text-dim);text-align:center;margin-bottom:12px;min-height:18px;}
   .scan-status.ok{color:var(--success);font-weight:600;}
+  .scan-status.warn{color:var(--accent);font-weight:600;}
 
   .manual-row{display:flex;gap:8px;margin-bottom:4px;}
   .manual-row input{flex:1;}
@@ -10583,12 +10584,36 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   }
 
   // ---------- Init ----------
+  const ACTIVE_LOT_STORAGE_KEY = "reception-lots:active-lot-id";
+  function saveActiveLotId(id){
+    try{
+      if(id){ localStorage.setItem(ACTIVE_LOT_STORAGE_KEY, id); }
+      else{ localStorage.removeItem(ACTIVE_LOT_STORAGE_KEY); }
+    }catch(e){ /* stockage local indisponible (mode privé, etc.) — pas bloquant */ }
+  }
+  function loadActiveLotId(){
+    try{ return localStorage.getItem(ACTIVE_LOT_STORAGE_KEY); }
+    catch(e){ return null; }
+  }
+
   async function init(){
     $("inDate").value = todayStr();
     const idx = await storeGet(LOTS_INDEX_KEY);
     lotsIndex = idx || [];
     if(storageMode === "remote"){ $("syncLabel").textContent = "synchronisé"; }
     renderLotsList();
+
+    const savedId = loadActiveLotId();
+    if(savedId){
+      const lot = await storeGet(lotKey(savedId));
+      if(lot){
+        activeLotId = savedId;
+        currentLot = lot;
+        showActiveLot();
+      } else {
+        saveActiveLotId(null); // le lot n'existe plus, on nettoie
+      }
+    }
   }
 
   // ---------- Tabs ----------
@@ -10631,6 +10656,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 
     activeLotId = id;
     currentLot = lot;
+    saveActiveLotId(id);
     $("inChauffeur").value = "";
     showActiveLot();
   });
@@ -10638,6 +10664,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   $("closeLotLink").addEventListener("click", () => {
     stopCamera();
     activeLotId = null; currentLot = null;
+    saveActiveLotId(null);
     $("activeLotBlock").classList.add("hidden");
     $("noLotCard").classList.remove("hidden");
   });
@@ -10651,28 +10678,44 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   }
 
   // ---------- Adding items ----------
-  async function addReference(ref){
-    if(!ref || !currentLot) return;
-    ref = ref.trim();
-    if(!ref) return;
-    const now = Date.now();
+  function extractReference(raw){
+    if(!raw) return raw;
+    raw = raw.trim();
+    // QR codes qui pointent vers une URL avec un paramètre codeEquipement=REV...
+    const m1 = raw.match(/codeEquipement=([^&\s]+)/i);
+    if(m1){
+      try{ return decodeURIComponent(m1[1]); }catch(e){ return m1[1]; }
+    }
+    // Sinon, on cherche directement un code commençant par REV n'importe où dans le texte scanné
+    const m2 = raw.match(/REV[A-Za-z0-9]+/);
+    if(m2) return m2[0];
+    // Sinon on garde tel quel (ex: référence simple saisie manuellement)
+    return raw;
+  }
+
+  async function addReference(rawRef){
+    if(!rawRef || !currentLot) return "invalid";
+    const ref = extractReference(rawRef);
+    if(!ref) return "invalid";
     const existing = currentLot.items.find(i => i.ref === ref);
     if(existing){
-      existing.qty += 1;
-      existing.lastScan = now;
-    } else {
-      currentLot.items.unshift({ref, qty:1, firstScan:now, lastScan:now});
+      return "duplicate";
     }
+    const now = Date.now();
+    currentLot.items.unshift({ref, firstScan:now, lastScan:now});
     renderItems();
     const ok = await storeSet(lotKey(currentLot.id), currentLot);
     if(!ok) toast("Non sauvegardé — vérifiez la connexion");
+    return "added";
   }
 
-  $("manualAddBtn").addEventListener("click", () => {
+  $("manualAddBtn").addEventListener("click", async () => {
     const v = $("manualRef").value;
-    addReference(v);
+    const ref = extractReference(v);
+    const status = await addReference(v);
     $("manualRef").value = "";
     $("manualRef").focus();
+    if(status === "duplicate") toast("Déjà scanné : " + ref);
   });
   $("manualRef").addEventListener("keydown", (e) => {
     if(e.key === "Enter"){ $("manualAddBtn").click(); }
@@ -10681,7 +10724,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   function renderItems(){
     const list = $("itemsList");
     const items = currentLot ? currentLot.items : [];
-    $("totalCount").textContent = items.reduce((s,i)=>s+i.qty,0);
+    $("totalCount").textContent = items.length;
     if(items.length === 0){
       list.innerHTML = '<div class="empty">Aucun article scanné pour l\'instant</div>';
       return;
@@ -10690,9 +10733,8 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <div class="item-row">
         <div>
           <div class="item-ref">${escapeHtml(i.ref)}</div>
-          <div class="item-meta">Dernier scan ${fmtTime(i.lastScan)}</div>
+          <div class="item-meta">Scanné à ${fmtTime(i.lastScan)}</div>
         </div>
-        <div class="item-qty">×${i.qty}</div>
       </div>
     `).join("");
   }
@@ -10760,22 +10802,32 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     rafId = requestAnimationFrame(tick);
   }
 
-  function handleScanResult(data){
+  async function handleScanResult(data){
     const now = Date.now();
-    if(data === lastScanRef && (now - lastScanTime) < 1500) return; // debounce duplicates
+    if(data === lastScanRef && (now - lastScanTime) < 1500) return; // ignore la relecture immédiate du même frame
     lastScanRef = data; lastScanTime = now;
 
     flashScan();
-    if(navigator.vibrate) navigator.vibrate(60);
-    addReference(data);
-    $("scanStatus").textContent = "Ajouté : " + data;
-    $("scanStatus").className = "scan-status ok";
+    const ref = extractReference(data);
+    const status = await addReference(data);
+
+    if(status === "duplicate"){
+      if(navigator.vibrate) navigator.vibrate([40,60,40]);
+      $("scanStatus").textContent = "Déjà scanné : " + ref;
+      $("scanStatus").className = "scan-status warn";
+    } else if(status === "added"){
+      if(navigator.vibrate) navigator.vibrate(60);
+      $("scanStatus").textContent = "Ajouté : " + ref;
+      $("scanStatus").className = "scan-status ok";
+    } else {
+      return;
+    }
     setTimeout(() => {
-      if($("scanStatus").classList.contains("ok")){
+      if($("scanStatus").classList.contains("ok") || $("scanStatus").classList.contains("warn")){
         $("scanStatus").textContent = "Visez le QR code du produit";
         $("scanStatus").className = "scan-status";
       }
-    }, 1400);
+    }, 1600);
   }
 
   function flashScan(){
@@ -10853,9 +10905,8 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         <div class="item-row">
           <div>
             <div class="item-ref">${escapeHtml(i.ref)}</div>
-            <div class="item-meta">Premier scan ${fmtTime(i.firstScan)} · dernier ${fmtTime(i.lastScan)}</div>
+            <div class="item-meta">Scanné à ${fmtTime(i.lastScan)}</div>
           </div>
-          <div class="item-qty">×${i.qty}</div>
         </div>
       `).join("");
     }
@@ -10926,4 +10977,3 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 </script>
 </body>
 </html>
-  
