@@ -237,7 +237,11 @@
           </div>
         </div>
 
-        <div class="card">
+        <div class="card hidden" id="lockedNotice" style="background:var(--panel-alt);">
+          <h2 style="margin:0;color:var(--text-dim);">🔒 Ce lot est clôturé — lecture seule. Passez par Contrôle pour consulter les anomalies, ou choisissez un autre lot.</h2>
+        </div>
+
+        <div class="card" id="scanCard">
           <div class="scan-box" id="scanBox">
             <video id="video" playsinline muted></video>
             <div class="scan-frame"><b></b></div>
@@ -248,7 +252,7 @@
           <button class="btn btn-secondary" id="camToggleBtn">Activer la caméra</button>
         </div>
 
-        <div class="card">
+        <div class="card" id="manualEntryCard">
           <h2>Saisie manuelle (si le scan ne fonctionne pas)</h2>
           <div class="manual-row">
             <input id="manualRef" type="text" placeholder="Référence produit">
@@ -10749,7 +10753,17 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     $("editLotCard").classList.add("hidden");
     $("activeWho").textContent = currentLot.chauffeur;
     $("activeWhen").textContent = fmtDate(currentLot.date);
+    applyLotLockState();
     renderItems();
+  }
+
+  function applyLotLockState(){
+    const locked = !!(currentLot && currentLot.finalStatus);
+    $("lockedNotice").classList.toggle("hidden", !locked);
+    $("editLotLink").classList.toggle("hidden", locked);
+    $("scanCard").classList.toggle("hidden", locked);
+    $("manualEntryCard").classList.toggle("hidden", locked);
+    if(locked) stopCamera();
   }
 
   // ---- Édition chauffeur / date du lot actif ----
@@ -10762,6 +10776,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     $("editLotCard").classList.add("hidden");
   });
   $("editLotSaveBtn").addEventListener("click", async () => {
+    if(!currentLot || currentLot.finalStatus) return;
     const chauffeur = $("editLotChauffeur").value.trim();
     const date = $("editLotDate").value;
     if(!chauffeur){ toast("Indiquez le nom du chauffeur"); return; }
@@ -10806,6 +10821,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 
   async function addReference(rawRef){
     if(!currentLot) return "invalid";
+    if(currentLot.finalStatus) return "locked";
     const status = addRefToItems(currentLot, rawRef);
     if(status === "added"){
       renderItems();
@@ -10830,6 +10846,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   function renderItems(){
     const list = $("itemsList");
     const items = currentLot ? currentLot.items : [];
+    const locked = !!(currentLot && currentLot.finalStatus);
     $("totalCount").textContent = items.length;
     if(items.length === 0){
       list.innerHTML = '<div class="empty">Aucun article scanné pour l\'instant</div>';
@@ -10841,16 +10858,18 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           <div class="item-ref">${escapeHtml(i.ref)}</div>
           <div class="item-meta">Scanné à ${fmtTime(i.lastScan)}</div>
         </div>
-        <button class="item-delete-btn" data-ref="${escapeHtml(i.ref)}" title="Retirer cet article">✕</button>
+        ${locked ? "" : `<button class="item-delete-btn" data-ref="${escapeHtml(i.ref)}" title="Retirer cet article">✕</button>`}
       </div>
     `).join("");
-    list.querySelectorAll(".item-delete-btn").forEach(btn => {
-      btn.addEventListener("click", () => removeScannedItem(btn.dataset.ref));
-    });
+    if(!locked){
+      list.querySelectorAll(".item-delete-btn").forEach(btn => {
+        btn.addEventListener("click", () => removeScannedItem(btn.dataset.ref));
+      });
+    }
   }
 
   async function removeScannedItem(ref){
-    if(!currentLot) return;
+    if(!currentLot || currentLot.finalStatus) return;
     if(!confirm("Retirer « " + ref + " » de ce lot ?")) return;
     currentLot.items = currentLot.items.filter(i => i.ref !== ref);
     renderItems();
