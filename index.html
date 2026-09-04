@@ -112,6 +112,11 @@
   /* Lot list (control tab) */
   .lot-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:10px;cursor:pointer;}
   .lot-card:active{background:var(--panel-alt);}
+  .lot-card-compact{display:flex;justify-content:space-between;align-items:center;background:var(--panel-alt);
+    border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:6px;cursor:pointer;}
+  .lot-card-compact:active{background:var(--panel);}
+  .lot-card-compact .who{font-size:14px;font-weight:600;}
+  .lot-card-compact .when{font-size:11px;color:var(--text-dim);margin-top:1px;}
   .lot-card-top{display:flex;justify-content:space-between;align-items:flex-start;}
   .lot-card .who{font-size:15px;font-weight:700;}
   .lot-card .when{font-size:12px;color:var(--text-dim);margin-top:2px;}
@@ -199,13 +204,37 @@
         <button class="btn btn-primary" id="startLotBtn">Démarrer la réception</button>
       </div>
 
+      <div class="card" id="resumeLotCard">
+        <h2>Ou reprendre un lot existant</h2>
+        <div id="resumeLotsList"></div>
+      </div>
+
       <div id="activeLotBlock" class="hidden">
         <div class="lot-banner">
           <div>
             <div class="who" id="activeWho">—</div>
             <div class="when" id="activeWhen">—</div>
           </div>
-          <a id="closeLotLink">Changer de lot</a>
+          <div style="display:flex;gap:14px;align-items:center;">
+            <a id="editLotLink">Modifier</a>
+            <a id="closeLotLink">Changer de lot</a>
+          </div>
+        </div>
+
+        <div class="card hidden" id="editLotCard">
+          <h2>Modifier les informations du lot</h2>
+          <div class="field">
+            <label for="editLotChauffeur">Chauffeur</label>
+            <input id="editLotChauffeur" type="text">
+          </div>
+          <div class="field">
+            <label for="editLotDate">Date</label>
+            <input id="editLotDate" type="date">
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-secondary" id="editLotCancelBtn">Annuler</button>
+            <button class="btn btn-primary" id="editLotSaveBtn">Enregistrer</button>
+          </div>
         </div>
 
         <div class="card">
@@ -251,33 +280,8 @@
           <span class="badge" id="detBadge">—</span>
         </div>
 
-        <div class="btn-row" style="margin-bottom:14px;">
-          <button class="btn btn-ghost" id="detEditInfoBtn">✎ Chauffeur / date</button>
-          <button class="btn btn-ghost" id="detReopenBtn">↻ Reprendre le scan</button>
-        </div>
-
-        <div class="card hidden" id="detEditInfoCard">
-          <h2>Modifier les informations du lot</h2>
-          <div class="field">
-            <label for="detEditChauffeur">Chauffeur</label>
-            <input id="detEditChauffeur" type="text">
-          </div>
-          <div class="field">
-            <label for="detEditDate">Date</label>
-            <input id="detEditDate" type="date">
-          </div>
-          <div class="btn-row">
-            <button class="btn btn-secondary" id="detEditCancelBtn">Annuler</button>
-            <button class="btn btn-primary" id="detEditSaveBtn">Enregistrer</button>
-          </div>
-        </div>
-
         <div class="card">
           <h2>Articles reçus</h2>
-          <div class="manual-row" style="margin-bottom:12px;">
-            <input id="detManualRef" type="text" placeholder="Ajouter une référence">
-            <button class="btn btn-primary" id="detManualAddBtn">Ajouter</button>
-          </div>
           <div id="detItemsList"></div>
         </div>
 
@@ -10630,6 +10634,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     lotsIndex = idx || [];
     if(storageMode === "remote"){ $("syncLabel").textContent = "synchronisé"; }
     renderLotsList();
+    renderResumeLotsList();
 
     const savedId = loadActiveLotId();
     if(savedId){
@@ -10642,6 +10647,38 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         saveActiveLotId(null); // le lot n'existe plus, on nettoie
       }
     }
+  }
+
+  function renderResumeLotsList(){
+    const wrap = $("resumeLotsList");
+    const card = $("resumeLotCard");
+    if(!lotsIndex.length){
+      card.classList.add("hidden");
+      return;
+    }
+    card.classList.remove("hidden");
+    const sorted = [...lotsIndex].sort((a,b)=>b.createdAt - a.createdAt).slice(0, 10);
+    wrap.innerHTML = sorted.map(l => `
+      <div class="lot-card-compact" data-id="${l.id}">
+        <div>
+          <div class="who">${escapeHtml(l.chauffeur)}</div>
+          <div class="when">${fmtDate(l.date)}</div>
+        </div>
+        ${statusBadge(l.status)}
+      </div>
+    `).join("");
+    wrap.querySelectorAll(".lot-card-compact").forEach(card => {
+      card.addEventListener("click", () => resumeLot(card.dataset.id));
+    });
+  }
+
+  async function resumeLot(id){
+    const lot = await storeGet(lotKey(id));
+    if(!lot){ toast("Lot introuvable"); return; }
+    activeLotId = id;
+    currentLot = lot;
+    saveActiveLotId(id);
+    showActiveLot();
   }
 
   // ---------- Tabs ----------
@@ -10689,21 +10726,57 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     showActiveLot();
   });
 
-  $("closeLotLink").addEventListener("click", () => {
+  $("closeLotLink").addEventListener("click", async () => {
     stopCamera();
     activeLotId = null; currentLot = null;
     saveActiveLotId(null);
     $("activeLotBlock").classList.add("hidden");
     $("noLotCard").classList.remove("hidden");
+    $("resumeLotCard").classList.remove("hidden");
+    await refreshLotsIndexLive();
+    renderResumeLotsList();
   });
+
+  async function refreshLotsIndexLive(){
+    const idx = await storeGet(LOTS_INDEX_KEY);
+    if(idx){ lotsIndex = idx; }
+  }
 
   function showActiveLot(){
     $("noLotCard").classList.add("hidden");
+    $("resumeLotCard").classList.add("hidden");
     $("activeLotBlock").classList.remove("hidden");
+    $("editLotCard").classList.add("hidden");
     $("activeWho").textContent = currentLot.chauffeur;
     $("activeWhen").textContent = fmtDate(currentLot.date);
     renderItems();
   }
+
+  // ---- Édition chauffeur / date du lot actif ----
+  $("editLotLink").addEventListener("click", () => {
+    $("editLotChauffeur").value = currentLot.chauffeur;
+    $("editLotDate").value = currentLot.date;
+    $("editLotCard").classList.remove("hidden");
+  });
+  $("editLotCancelBtn").addEventListener("click", () => {
+    $("editLotCard").classList.add("hidden");
+  });
+  $("editLotSaveBtn").addEventListener("click", async () => {
+    const chauffeur = $("editLotChauffeur").value.trim();
+    const date = $("editLotDate").value;
+    if(!chauffeur){ toast("Indiquez le nom du chauffeur"); return; }
+    if(!date){ toast("Indiquez une date"); return; }
+    currentLot.chauffeur = chauffeur;
+    currentLot.date = date;
+    $("activeWho").textContent = chauffeur;
+    $("activeWhen").textContent = fmtDate(date);
+    $("editLotCard").classList.add("hidden");
+    await storeSet(lotKey(currentLot.id), currentLot);
+    const idxEntry = lotsIndex.find(l => l.id === currentLot.id);
+    if(idxEntry){ idxEntry.chauffeur = chauffeur; idxEntry.date = date; }
+    await storeSet(LOTS_INDEX_KEY, lotsIndex);
+    toast("Informations mises à jour");
+  });
 
   // ---------- Adding items ----------
   function extractReference(raw){
@@ -10768,8 +10841,21 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           <div class="item-ref">${escapeHtml(i.ref)}</div>
           <div class="item-meta">Scanné à ${fmtTime(i.lastScan)}</div>
         </div>
+        <button class="item-delete-btn" data-ref="${escapeHtml(i.ref)}" title="Retirer cet article">✕</button>
       </div>
     `).join("");
+    list.querySelectorAll(".item-delete-btn").forEach(btn => {
+      btn.addEventListener("click", () => removeScannedItem(btn.dataset.ref));
+    });
+  }
+
+  async function removeScannedItem(ref){
+    if(!currentLot) return;
+    if(!confirm("Retirer « " + ref + " » de ce lot ?")) return;
+    currentLot.items = currentLot.items.filter(i => i.ref !== ref);
+    renderItems();
+    const ok = await storeSet(lotKey(currentLot.id), currentLot);
+    if(!ok) toast("Non sauvegardé — vérifiez la connexion");
   }
 
   function escapeHtml(s){
@@ -10940,12 +11026,8 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
             <div class="item-ref">${escapeHtml(i.ref)}</div>
             <div class="item-meta">Scanné à ${fmtTime(i.lastScan)}</div>
           </div>
-          <button class="item-delete-btn" data-ref="${escapeHtml(i.ref)}" title="Retirer cet article">✕</button>
         </div>
       `).join("");
-      items.querySelectorAll(".item-delete-btn").forEach(btn => {
-        btn.addEventListener("click", () => removeItemFromDetail(btn.dataset.ref));
-      });
     }
 
     const anCard = $("anomaliesCard");
@@ -10963,72 +11045,6 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       `).join("");
     }
   }
-
-  async function removeItemFromDetail(ref){
-    if(!confirm("Retirer « " + ref + " » de ce lot ?")) return;
-    detailLot.items = detailLot.items.filter(i => i.ref !== ref);
-    renderLotDetail();
-    const ok = await storeSet(lotKey(detailLot.id), detailLot);
-    if(!ok) toast("Non sauvegardé — vérifiez la connexion");
-  }
-
-  $("detManualAddBtn").addEventListener("click", async () => {
-    const v = $("detManualRef").value;
-    const ref = extractReference(v);
-    const status = addRefToItems(detailLot, v);
-    $("detManualRef").value = "";
-    $("detManualRef").focus();
-    if(status === "duplicate"){ toast("Déjà présent : " + ref); return; }
-    if(status === "invalid") return;
-    renderLotDetail();
-    const ok = await storeSet(lotKey(detailLot.id), detailLot);
-    if(!ok) toast("Non sauvegardé — vérifiez la connexion");
-  });
-  $("detManualRef").addEventListener("keydown", (e) => {
-    if(e.key === "Enter"){ $("detManualAddBtn").click(); }
-  });
-
-  // ---- Édition chauffeur / date ----
-  $("detEditInfoBtn").addEventListener("click", () => {
-    $("detEditChauffeur").value = detailLot.chauffeur;
-    $("detEditDate").value = detailLot.date;
-    $("detEditInfoCard").classList.remove("hidden");
-  });
-  $("detEditCancelBtn").addEventListener("click", () => {
-    $("detEditInfoCard").classList.add("hidden");
-  });
-  $("detEditSaveBtn").addEventListener("click", async () => {
-    const chauffeur = $("detEditChauffeur").value.trim();
-    const date = $("detEditDate").value;
-    if(!chauffeur){ toast("Indiquez le nom du chauffeur"); return; }
-    if(!date){ toast("Indiquez une date"); return; }
-    detailLot.chauffeur = chauffeur;
-    detailLot.date = date;
-    renderLotDetail();
-    $("detEditInfoCard").classList.add("hidden");
-    await storeSet(lotKey(detailLot.id), detailLot);
-    const idxEntry = lotsIndex.find(l => l.id === detailLot.id);
-    if(idxEntry){ idxEntry.chauffeur = chauffeur; idxEntry.date = date; }
-    await storeSet(LOTS_INDEX_KEY, lotsIndex);
-    toast("Informations mises à jour");
-  });
-
-  // ---- Reprendre le scan de ce lot ----
-  $("detReopenBtn").addEventListener("click", async () => {
-    activeLotId = detailLot.id;
-    currentLot = detailLot;
-    saveActiveLotId(detailLot.id);
-    if(detailLot.finalStatus){
-      detailLot.finalStatus = null;
-      const idxEntry = lotsIndex.find(l => l.id === detailLot.id);
-      if(idxEntry){ idxEntry.status = null; }
-      await storeSet(lotKey(detailLot.id), detailLot);
-      await storeSet(LOTS_INDEX_KEY, lotsIndex);
-      toast("Lot rouvert pour scan — le statut a été réinitialisé");
-    }
-    switchTab("scan");
-    showActiveLot();
-  });
 
   $("addAnomalyBtn").addEventListener("click", async () => {
     const type = $("anType").value;
