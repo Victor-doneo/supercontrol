@@ -153,6 +153,11 @@
   .auth-msg{font-size:13px;color:var(--text-dim);margin-top:12px;min-height:18px;}
   .logout-btn{background:none;border:1px solid var(--line);color:var(--text-dim);font-size:11px;
     padding:5px 10px;border-radius:100px;cursor:pointer;}
+
+  .signature-pad-wrap{background:#fff;border-radius:10px;overflow:hidden;border:1px solid var(--line);}
+  #signatureCanvas{display:block;width:100%;height:220px;touch-action:none;}
+  .signature-thumb{max-width:220px;background:#fff;border-radius:8px;padding:6px;display:block;}
+  .signature-meta{font-size:11px;color:var(--text-dim);margin-top:6px;}
 </style>
 </head>
 <body>
@@ -217,6 +222,7 @@
             <div class="when" id="activeWhen">—</div>
           </div>
           <div style="display:flex;gap:14px;align-items:center;">
+            <span class="badge badge-ready" id="activeItemCount">0 réf.</span>
             <a id="editLotLink">Modifier</a>
             <a id="deleteLotLink" style="color:var(--danger);">Supprimer</a>
             <a id="closeLotLink">Changer de lot</a>
@@ -245,7 +251,8 @@
 
         <div class="card hidden" id="scanValidatedNotice" style="background:var(--success-dim);">
           <h2 style="margin:0 0 12px 0;color:var(--success);">✅ Scan validé — ce lot est prêt pour le contrôle</h2>
-          <button class="btn btn-ghost" id="undoValidateScanBtn">Annuler la validation</button>
+          <div id="scanValidatedSigWrap"></div>
+          <button class="btn btn-ghost" id="undoValidateScanBtn" style="margin-top:10px;">Annuler la validation</button>
         </div>
 
         <div class="card" id="scanCard">
@@ -275,6 +282,19 @@
         <div class="card" id="validateScanCard" style="margin-top:14px;">
           <button class="btn btn-success" id="validateScanBtn">✓ Valider — Scan terminé</button>
         </div>
+
+        <div class="card hidden" id="signatureCard">
+          <h2>Signature du chauffeur</h2>
+          <p style="font-size:12px;color:var(--text-dim);margin:0 0 12px 0;">Faites signer le chauffeur ci-dessous pour confirmer la réception de ce lot.</p>
+          <div class="signature-pad-wrap">
+            <canvas id="signatureCanvas"></canvas>
+          </div>
+          <div class="btn-row" style="margin-top:10px;">
+            <button class="btn btn-secondary" id="sigClearBtn">Effacer</button>
+            <button class="btn btn-secondary" id="sigCancelBtn">Annuler</button>
+          </div>
+          <button class="btn btn-success" id="sigConfirmBtn" style="margin-top:10px;">Confirmer la signature et valider</button>
+        </div>
       </div>
     </div>
 
@@ -293,6 +313,11 @@
             <div class="when" id="detWhen">—</div>
           </div>
           <span class="badge" id="detBadge">—</span>
+        </div>
+
+        <div class="card hidden" id="detSignatureCard">
+          <h2>Signature du chauffeur</h2>
+          <div id="detSignatureWrap"></div>
         </div>
 
         <div class="card">
@@ -10799,29 +10824,112 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     $("lockedNotice").classList.toggle("hidden", !hardLocked);
     $("scanValidatedNotice").classList.toggle("hidden", !softLocked);
     $("validateScanCard").classList.toggle("hidden", anyLocked);
+    $("signatureCard").classList.add("hidden");
 
     $("editLotLink").classList.toggle("hidden", hardLocked);
     $("deleteLotLink").classList.toggle("hidden", hardLocked);
     $("scanCard").classList.toggle("hidden", anyLocked);
     $("manualEntryCard").classList.toggle("hidden", anyLocked);
     if(anyLocked) stopCamera();
+
+    const sigWrap = $("scanValidatedSigWrap");
+    if(softLocked && currentLot.signature){
+      sigWrap.innerHTML = `<img class="signature-thumb" src="${currentLot.signature}" alt="Signature du chauffeur">
+        <div class="signature-meta">Signé le ${fmtTime(currentLot.signedAt)}${currentLot.signedAt ? " · " + fmtDate(new Date(currentLot.signedAt).toISOString().slice(0,10)) : ""}</div>`;
+    } else if(sigWrap){
+      sigWrap.innerHTML = "";
+    }
   }
+
+  // ---- Signature du chauffeur (canvas) ----
+  let sigCtx = null, sigDrawing = false, sigHasContent = false;
+
+  function setupSignatureCanvas(){
+    const canvas = $("signatureCanvas");
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.parentElement.getBoundingClientRect();
+    canvas.width = Math.max(rect.width, 280) * dpr;
+    canvas.height = 220 * dpr;
+    sigCtx = canvas.getContext("2d");
+    sigCtx.scale(dpr, dpr);
+    sigCtx.lineWidth = 2.2;
+    sigCtx.lineCap = "round";
+    sigCtx.lineJoin = "round";
+    sigCtx.strokeStyle = "#1B1F24";
+    sigHasContent = false;
+  }
+  function sigPos(e, canvas){
+    const rect = canvas.getBoundingClientRect();
+    const p = e.touches ? e.touches[0] : e;
+    return { x: p.clientX - rect.left, y: p.clientY - rect.top };
+  }
+  function sigStart(e){
+    e.preventDefault();
+    sigDrawing = true;
+    const canvas = $("signatureCanvas");
+    const p = sigPos(e, canvas);
+    sigCtx.beginPath();
+    sigCtx.moveTo(p.x, p.y);
+  }
+  function sigMove(e){
+    if(!sigDrawing) return;
+    e.preventDefault();
+    const canvas = $("signatureCanvas");
+    const p = sigPos(e, canvas);
+    sigCtx.lineTo(p.x, p.y);
+    sigCtx.stroke();
+    sigHasContent = true;
+  }
+  function sigEnd(){ sigDrawing = false; }
+
+  const sigCanvasEl = $("signatureCanvas");
+  sigCanvasEl.addEventListener("mousedown", sigStart);
+  sigCanvasEl.addEventListener("mousemove", sigMove);
+  window.addEventListener("mouseup", sigEnd);
+  sigCanvasEl.addEventListener("touchstart", sigStart, {passive:false});
+  sigCanvasEl.addEventListener("touchmove", sigMove, {passive:false});
+  sigCanvasEl.addEventListener("touchend", sigEnd);
+
+  $("sigClearBtn").addEventListener("click", () => {
+    const canvas = $("signatureCanvas");
+    sigCtx.clearRect(0, 0, canvas.width, canvas.height);
+    sigHasContent = false;
+  });
+
+  $("sigCancelBtn").addEventListener("click", () => {
+    $("signatureCard").classList.add("hidden");
+    $("validateScanCard").classList.remove("hidden");
+  });
 
   $("validateScanBtn").addEventListener("click", async () => {
     if(!currentLot || currentLot.finalStatus) return;
     if(!currentLot.items.length && !confirm("Aucun article n'a été scanné dans ce lot. Valider quand même ?")) return;
+    $("validateScanCard").classList.add("hidden");
+    $("signatureCard").classList.remove("hidden");
+    setupSignatureCanvas();
+  });
+
+  $("sigConfirmBtn").addEventListener("click", async () => {
+    if(!currentLot) return;
+    if(!sigHasContent){ toast("Merci de faire signer le chauffeur avant de valider"); return; }
+    const signature = $("signatureCanvas").toDataURL("image/png");
     currentLot.scanValidated = true;
+    currentLot.signature = signature;
+    currentLot.signedAt = Date.now();
     applyLotLockState();
     await storeSet(lotKey(currentLot.id), currentLot);
     const idxEntry = lotsIndex.find(l => l.id === currentLot.id);
     if(idxEntry){ idxEntry.scanValidated = true; }
     await storeSet(LOTS_INDEX_KEY, lotsIndex);
-    toast("Scan validé — prêt pour le contrôle");
+    toast("Scan validé et signé — prêt pour le contrôle");
   });
 
   $("undoValidateScanBtn").addEventListener("click", async () => {
     if(!currentLot || currentLot.finalStatus) return;
+    if(!confirm("Annuler la validation ? La signature enregistrée sera supprimée et il faudra la refaire.")) return;
     currentLot.scanValidated = false;
+    currentLot.signature = null;
+    currentLot.signedAt = null;
     applyLotLockState();
     await storeSet(lotKey(currentLot.id), currentLot);
     const idxEntry = lotsIndex.find(l => l.id === currentLot.id);
@@ -10931,6 +11039,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const items = currentLot ? currentLot.items : [];
     const locked = !!(currentLot && (currentLot.finalStatus || currentLot.scanValidated));
     $("totalCount").textContent = items.length;
+    $("activeItemCount").textContent = items.length + (items.length > 1 ? " réf." : " réf.");
     if(items.length === 0){
       list.innerHTML = '<div class="empty">Aucun article scanné pour l\'instant</div>';
       return;
@@ -11118,6 +11227,15 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     $("detWho").textContent = lot.chauffeur;
     $("detWhen").textContent = fmtDate(lot.date);
     $("detBadge").outerHTML = statusBadge(lot.finalStatus, lot.scanValidated).replace('class="badge', 'id="detBadge" class="badge');
+
+    const sigCard = $("detSignatureCard");
+    if(lot.signature){
+      sigCard.classList.remove("hidden");
+      $("detSignatureWrap").innerHTML = `<img class="signature-thumb" src="${lot.signature}" alt="Signature du chauffeur">
+        <div class="signature-meta">Signé le ${fmtTime(lot.signedAt)}</div>`;
+    } else {
+      sigCard.classList.add("hidden");
+    }
 
     const items = $("detItemsList");
     if(!lot.items.length){
