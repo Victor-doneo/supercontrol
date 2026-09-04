@@ -225,7 +225,6 @@
           <div style="display:flex;gap:14px;align-items:center;">
             <span class="badge badge-ready" id="activeItemCount">0 réf.</span>
             <a id="editLotLink">Modifier</a>
-            <a id="deleteLotLink" style="color:var(--danger);">Supprimer</a>
           </div>
         </div>
 
@@ -312,7 +311,10 @@
             <div class="who" id="detWho">—</div>
             <div class="when" id="detWhen">—</div>
           </div>
-          <span class="badge" id="detBadge">—</span>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <span class="badge badge-ready" id="detItemCount">0 réf.</span>
+            <span class="badge" id="detBadge">—</span>
+          </div>
         </div>
 
         <div class="card hidden" id="detSignatureCard">
@@ -10779,7 +10781,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const ok = await storeSet(lotKey(id), lot);
     if(!ok){ toast("Erreur de sauvegarde, réessayez"); return; }
 
-    lotsIndex.unshift({id, chauffeur, date, createdAt: lot.createdAt, status: null, scanValidated: false});
+    lotsIndex.unshift({id, chauffeur, date, createdAt: lot.createdAt, status: null, scanValidated: false, itemCount: 0});
     await storeSet(LOTS_INDEX_KEY, lotsIndex);
 
     activeLotId = id;
@@ -10827,7 +10829,6 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     $("signatureCard").classList.add("hidden");
 
     $("editLotLink").classList.toggle("hidden", hardLocked);
-    $("deleteLotLink").classList.toggle("hidden", hardLocked);
     $("scanCard").classList.toggle("hidden", anyLocked);
     $("manualEntryCard").classList.toggle("hidden", anyLocked);
     if(anyLocked) stopCamera();
@@ -10938,25 +10939,6 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     toast("Validation annulée — vous pouvez reprendre le scan");
   });
 
-  $("deleteLotLink").addEventListener("click", async () => {
-    if(!currentLot || currentLot.finalStatus) return;
-    if(!confirm("Supprimer définitivement ce lot (" + currentLot.chauffeur + ", " + fmtDate(currentLot.date) + ") et tous ses articles scannés ? Cette action est irréversible.")) return;
-
-    const idToDelete = currentLot.id;
-    stopCamera();
-    activeLotId = null; currentLot = null;
-    saveActiveLotId(null);
-    $("activeLotBlock").classList.add("hidden");
-    $("noLotCard").classList.remove("hidden");
-    $("resumeLotCard").classList.remove("hidden");
-
-    await storeDelete(lotKey(idToDelete));
-    lotsIndex = lotsIndex.filter(l => l.id !== idToDelete);
-    await storeSet(LOTS_INDEX_KEY, lotsIndex);
-    renderResumeLotsList();
-    toast("Lot supprimé");
-  });
-
   // ---- Édition chauffeur / date du lot actif ----
   $("editLotLink").addEventListener("click", () => {
     $("editLotChauffeur").value = currentLot.chauffeur;
@@ -11010,6 +10992,14 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     return "added";
   }
 
+  async function syncItemCountInIndex(lot){
+    const idxEntry = lotsIndex.find(l => l.id === lot.id);
+    if(idxEntry){
+      idxEntry.itemCount = lot.items.length;
+      await storeSet(LOTS_INDEX_KEY, lotsIndex);
+    }
+  }
+
   async function addReference(rawRef){
     if(!currentLot) return "invalid";
     if(currentLot.finalStatus || currentLot.scanValidated) return "locked";
@@ -11018,6 +11008,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       renderItems();
       const ok = await storeSet(lotKey(currentLot.id), currentLot);
       if(!ok) toast("Non sauvegardé — vérifiez la connexion");
+      await syncItemCountInIndex(currentLot);
     }
     return status;
   }
@@ -11067,6 +11058,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     renderItems();
     const ok = await storeSet(lotKey(currentLot.id), currentLot);
     if(!ok) toast("Non sauvegardé — vérifiez la connexion");
+    await syncItemCountInIndex(currentLot);
   }
 
   function escapeHtml(s){
@@ -11188,7 +11180,10 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
             <div class="who">${escapeHtml(l.chauffeur)}</div>
             <div class="when">${fmtDate(l.date)}</div>
           </div>
-          ${statusBadge(l.status, l.scanValidated)}
+          <div style="display:flex;gap:6px;align-items:center;">
+            <span class="badge badge-ready">${l.itemCount != null ? l.itemCount : "?"} réf.</span>
+            ${statusBadge(l.status, l.scanValidated)}
+          </div>
         </div>
       </div>
     `).join("");
@@ -11226,6 +11221,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const lot = detailLot;
     $("detWho").textContent = lot.chauffeur;
     $("detWhen").textContent = fmtDate(lot.date);
+    $("detItemCount").textContent = lot.items.length + " réf.";
     $("detBadge").outerHTML = statusBadge(lot.finalStatus, lot.scanValidated).replace('class="badge', 'id="detBadge" class="badge');
 
     const sigCard = $("detSignatureCard");
