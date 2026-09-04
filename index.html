@@ -217,6 +217,7 @@
           </div>
           <div style="display:flex;gap:14px;align-items:center;">
             <a id="editLotLink">Modifier</a>
+            <a id="deleteLotLink" style="color:var(--danger);">Supprimer</a>
             <a id="closeLotLink">Changer de lot</a>
           </div>
         </div>
@@ -289,7 +290,11 @@
           <div id="detItemsList"></div>
         </div>
 
-        <div class="card">
+        <div class="card hidden" id="detLockedNotice" style="background:var(--panel-alt);">
+          <h2 style="margin:0;color:var(--text-dim);">🔒 Ce lot est déjà clôturé — plus aucune modification possible ici.</h2>
+        </div>
+
+        <div class="card" id="anomalyFormCard">
           <h2>Signaler une anomalie</h2>
           <div class="field">
             <label for="anType">Type</label>
@@ -320,7 +325,7 @@
           <div id="anomaliesList"></div>
         </div>
 
-        <div class="btn-row">
+        <div class="btn-row" id="finalizeBtnRow">
           <button class="btn btn-success" id="markCompleteBtn">✓ Lot complet</button>
           <button class="btn btn-danger" id="markIssueBtn">⚠ Clôturer avec anomalies</button>
         </div>
@@ -10563,6 +10568,24 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     }
   }
 
+  async function storeDelete(key){
+    if(storageMode === "memory"){
+      delete memoryStore[key];
+      return true;
+    }
+    try{
+      const { error } = await sb.from("storage_kv").delete().eq("key", key);
+      if(error) throw error;
+      return true;
+    }catch(e){
+      console.error("storage delete failed", e);
+      storageErrorMsg = (e && e.message) ? e.message : String(e);
+      downgradeStorage("memory");
+      delete memoryStore[key];
+      return false;
+    }
+  }
+
   function downgradeStorage(mode){
     if(storageMode === mode) return;
     storageMode = mode;
@@ -10761,10 +10784,30 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const locked = !!(currentLot && currentLot.finalStatus);
     $("lockedNotice").classList.toggle("hidden", !locked);
     $("editLotLink").classList.toggle("hidden", locked);
+    $("deleteLotLink").classList.toggle("hidden", locked);
     $("scanCard").classList.toggle("hidden", locked);
     $("manualEntryCard").classList.toggle("hidden", locked);
     if(locked) stopCamera();
   }
+
+  $("deleteLotLink").addEventListener("click", async () => {
+    if(!currentLot || currentLot.finalStatus) return;
+    if(!confirm("Supprimer définitivement ce lot (" + currentLot.chauffeur + ", " + fmtDate(currentLot.date) + ") et tous ses articles scannés ? Cette action est irréversible.")) return;
+
+    const idToDelete = currentLot.id;
+    stopCamera();
+    activeLotId = null; currentLot = null;
+    saveActiveLotId(null);
+    $("activeLotBlock").classList.add("hidden");
+    $("noLotCard").classList.remove("hidden");
+    $("resumeLotCard").classList.remove("hidden");
+
+    await storeDelete(lotKey(idToDelete));
+    lotsIndex = lotsIndex.filter(l => l.id !== idToDelete);
+    await storeSet(LOTS_INDEX_KEY, lotsIndex);
+    renderResumeLotsList();
+    toast("Lot supprimé");
+  });
 
   // ---- Édition chauffeur / date du lot actif ----
   $("editLotLink").addEventListener("click", () => {
@@ -11063,9 +11106,15 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         </div>
       `).join("");
     }
+
+    const locked = !!lot.finalStatus;
+    $("detLockedNotice").classList.toggle("hidden", !locked);
+    $("anomalyFormCard").classList.toggle("hidden", locked);
+    $("finalizeBtnRow").classList.toggle("hidden", locked);
   }
 
   $("addAnomalyBtn").addEventListener("click", async () => {
+    if(!detailLot || detailLot.finalStatus) return;
     const type = $("anType").value;
     const ref = $("anRef").value.trim();
     const qty = parseInt($("anQty").value, 10) || 1;
@@ -11085,6 +11134,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   });
 
   $("markCompleteBtn").addEventListener("click", async () => {
+    if(!detailLot || detailLot.finalStatus) return;
     if(detailLot.anomalies.length && !confirm("Des anomalies sont enregistrées sur ce lot. Le marquer complet quand même ?")){
       return;
     }
@@ -11093,6 +11143,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   });
 
   $("markIssueBtn").addEventListener("click", async () => {
+    if(!detailLot || detailLot.finalStatus) return;
     if(!detailLot.anomalies.length){
       toast("Ajoutez au moins une anomalie avant de clôturer");
       return;
