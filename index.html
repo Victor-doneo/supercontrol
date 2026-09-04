@@ -104,6 +104,9 @@
   .item-meta{font-size:11px;color:var(--text-dim);margin-top:2px;}
   .item-qty{font-family:var(--mono);font-weight:700;background:var(--accent-dim);color:var(--accent);
     border-radius:6px;padding:3px 9px;font-size:13px;min-width:28px;text-align:center;}
+  .item-delete-btn{background:none;border:1px solid var(--line);color:var(--text-dim);width:30px;height:30px;
+    border-radius:8px;font-size:14px;cursor:pointer;flex-shrink:0;}
+  .item-delete-btn:active{background:var(--danger-dim);color:var(--danger);border-color:#6b352d;}
   .empty{color:var(--text-dim);font-size:13px;text-align:center;padding:24px 10px;}
 
   /* Lot list (control tab) */
@@ -248,8 +251,33 @@
           <span class="badge" id="detBadge">—</span>
         </div>
 
+        <div class="btn-row" style="margin-bottom:14px;">
+          <button class="btn btn-ghost" id="detEditInfoBtn">✎ Chauffeur / date</button>
+          <button class="btn btn-ghost" id="detReopenBtn">↻ Reprendre le scan</button>
+        </div>
+
+        <div class="card hidden" id="detEditInfoCard">
+          <h2>Modifier les informations du lot</h2>
+          <div class="field">
+            <label for="detEditChauffeur">Chauffeur</label>
+            <input id="detEditChauffeur" type="text">
+          </div>
+          <div class="field">
+            <label for="detEditDate">Date</label>
+            <input id="detEditDate" type="date">
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-secondary" id="detEditCancelBtn">Annuler</button>
+            <button class="btn btn-primary" id="detEditSaveBtn">Enregistrer</button>
+          </div>
+        </div>
+
         <div class="card">
           <h2>Articles reçus</h2>
+          <div class="manual-row" style="margin-bottom:12px;">
+            <input id="detManualRef" type="text" placeholder="Ajouter une référence">
+            <button class="btn btn-primary" id="detManualAddBtn">Ajouter</button>
+          </div>
           <div id="detItemsList"></div>
         </div>
 
@@ -10693,20 +10721,25 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     return raw;
   }
 
-  async function addReference(rawRef){
-    if(!rawRef || !currentLot) return "invalid";
+  function addRefToItems(lot, rawRef){
+    if(!rawRef || !lot) return "invalid";
     const ref = extractReference(rawRef);
     if(!ref) return "invalid";
-    const existing = currentLot.items.find(i => i.ref === ref);
-    if(existing){
-      return "duplicate";
-    }
+    if(lot.items.find(i => i.ref === ref)) return "duplicate";
     const now = Date.now();
-    currentLot.items.unshift({ref, firstScan:now, lastScan:now});
-    renderItems();
-    const ok = await storeSet(lotKey(currentLot.id), currentLot);
-    if(!ok) toast("Non sauvegardé — vérifiez la connexion");
+    lot.items.unshift({ref, firstScan:now, lastScan:now});
     return "added";
+  }
+
+  async function addReference(rawRef){
+    if(!currentLot) return "invalid";
+    const status = addRefToItems(currentLot, rawRef);
+    if(status === "added"){
+      renderItems();
+      const ok = await storeSet(lotKey(currentLot.id), currentLot);
+      if(!ok) toast("Non sauvegardé — vérifiez la connexion");
+    }
+    return status;
   }
 
   $("manualAddBtn").addEventListener("click", async () => {
@@ -10907,8 +10940,12 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
             <div class="item-ref">${escapeHtml(i.ref)}</div>
             <div class="item-meta">Scanné à ${fmtTime(i.lastScan)}</div>
           </div>
+          <button class="item-delete-btn" data-ref="${escapeHtml(i.ref)}" title="Retirer cet article">✕</button>
         </div>
       `).join("");
+      items.querySelectorAll(".item-delete-btn").forEach(btn => {
+        btn.addEventListener("click", () => removeItemFromDetail(btn.dataset.ref));
+      });
     }
 
     const anCard = $("anomaliesCard");
@@ -10926,6 +10963,72 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       `).join("");
     }
   }
+
+  async function removeItemFromDetail(ref){
+    if(!confirm("Retirer « " + ref + " » de ce lot ?")) return;
+    detailLot.items = detailLot.items.filter(i => i.ref !== ref);
+    renderLotDetail();
+    const ok = await storeSet(lotKey(detailLot.id), detailLot);
+    if(!ok) toast("Non sauvegardé — vérifiez la connexion");
+  }
+
+  $("detManualAddBtn").addEventListener("click", async () => {
+    const v = $("detManualRef").value;
+    const ref = extractReference(v);
+    const status = addRefToItems(detailLot, v);
+    $("detManualRef").value = "";
+    $("detManualRef").focus();
+    if(status === "duplicate"){ toast("Déjà présent : " + ref); return; }
+    if(status === "invalid") return;
+    renderLotDetail();
+    const ok = await storeSet(lotKey(detailLot.id), detailLot);
+    if(!ok) toast("Non sauvegardé — vérifiez la connexion");
+  });
+  $("detManualRef").addEventListener("keydown", (e) => {
+    if(e.key === "Enter"){ $("detManualAddBtn").click(); }
+  });
+
+  // ---- Édition chauffeur / date ----
+  $("detEditInfoBtn").addEventListener("click", () => {
+    $("detEditChauffeur").value = detailLot.chauffeur;
+    $("detEditDate").value = detailLot.date;
+    $("detEditInfoCard").classList.remove("hidden");
+  });
+  $("detEditCancelBtn").addEventListener("click", () => {
+    $("detEditInfoCard").classList.add("hidden");
+  });
+  $("detEditSaveBtn").addEventListener("click", async () => {
+    const chauffeur = $("detEditChauffeur").value.trim();
+    const date = $("detEditDate").value;
+    if(!chauffeur){ toast("Indiquez le nom du chauffeur"); return; }
+    if(!date){ toast("Indiquez une date"); return; }
+    detailLot.chauffeur = chauffeur;
+    detailLot.date = date;
+    renderLotDetail();
+    $("detEditInfoCard").classList.add("hidden");
+    await storeSet(lotKey(detailLot.id), detailLot);
+    const idxEntry = lotsIndex.find(l => l.id === detailLot.id);
+    if(idxEntry){ idxEntry.chauffeur = chauffeur; idxEntry.date = date; }
+    await storeSet(LOTS_INDEX_KEY, lotsIndex);
+    toast("Informations mises à jour");
+  });
+
+  // ---- Reprendre le scan de ce lot ----
+  $("detReopenBtn").addEventListener("click", async () => {
+    activeLotId = detailLot.id;
+    currentLot = detailLot;
+    saveActiveLotId(detailLot.id);
+    if(detailLot.finalStatus){
+      detailLot.finalStatus = null;
+      const idxEntry = lotsIndex.find(l => l.id === detailLot.id);
+      if(idxEntry){ idxEntry.status = null; }
+      await storeSet(lotKey(detailLot.id), detailLot);
+      await storeSet(LOTS_INDEX_KEY, lotsIndex);
+      toast("Lot rouvert pour scan — le statut a été réinitialisé");
+    }
+    switchTab("scan");
+    showActiveLot();
+  });
 
   $("addAnomalyBtn").addEventListener("click", async () => {
     const type = $("anType").value;
