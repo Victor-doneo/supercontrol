@@ -10587,6 +10587,33 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     }
   }
 
+  // Liste les lots directement depuis leurs propres fiches en base (chaque lot
+  // est sa propre ligne), plutôt que via un index séparé qui pouvait se faire
+  // écraser en cas de créations simultanées depuis plusieurs appareils.
+  function lotToIndexEntry(lot){
+    return { id: lot.id, chauffeur: lot.chauffeur, date: lot.date, createdAt: lot.createdAt, status: lot.finalStatus, scanValidated: lot.scanValidated };
+  }
+
+  async function fetchAllLots(){
+    if(storageMode === "memory"){
+      return Object.keys(memoryStore)
+        .filter(k => k.startsWith("lot:"))
+        .map(k => lotToIndexEntry(memoryStore[k]));
+    }
+    try{
+      const { data, error } = await sb.from("storage_kv").select("value").like("key", "lot:%");
+      if(error) throw error;
+      return data.map(row => lotToIndexEntry(row.value));
+    }catch(e){
+      console.error("fetchAllLots failed", e);
+      storageErrorMsg = (e && e.message) ? e.message : String(e);
+      downgradeStorage("memory");
+      return Object.keys(memoryStore)
+        .filter(k => k.startsWith("lot:"))
+        .map(k => lotToIndexEntry(memoryStore[k]));
+    }
+  }
+
   async function storeSet(key, value){
     if(storageMode === "memory"){
       memoryStore[key] = value;
@@ -10645,7 +10672,6 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     b.innerHTML = escapeHtml(message) + "<br><span style='opacity:.8'>Détail technique : " + escapeHtml(storageErrorMsg || "inconnu") + "</span>";
   }
 
-  const LOTS_INDEX_KEY = "lots-index";
   function lotKey(id){ return "lot:" + id; }
 
   // ---------- App state ----------
@@ -10694,8 +10720,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 
   async function init(){
     $("inDate").value = todayStr();
-    const idx = await storeGet(LOTS_INDEX_KEY);
-    lotsIndex = idx || [];
+    lotsIndex = await fetchAllLots();
     if(storageMode === "remote"){ $("syncLabel").textContent = "synchronisé"; }
     renderLotsList();
     renderResumeLotsList();
@@ -10781,8 +10806,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const ok = await storeSet(lotKey(id), lot);
     if(!ok){ toast("Erreur de sauvegarde, réessayez"); return; }
 
-    lotsIndex.unshift({id, chauffeur, date, createdAt: lot.createdAt, status: null, scanValidated: false});
-    await storeSet(LOTS_INDEX_KEY, lotsIndex);
+    lotsIndex.unshift(lotToIndexEntry(lot));
 
     activeLotId = id;
     currentLot = lot;
@@ -10798,14 +10822,9 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     $("activeLotBlock").classList.add("hidden");
     $("noLotCard").classList.remove("hidden");
     $("resumeLotCard").classList.remove("hidden");
-    await refreshLotsIndexLive();
+    lotsIndex = await fetchAllLots();
     renderResumeLotsList();
   });
-
-  async function refreshLotsIndexLive(){
-    const idx = await storeGet(LOTS_INDEX_KEY);
-    if(idx){ lotsIndex = idx; }
-  }
 
   function showActiveLot(){
     $("noLotCard").classList.add("hidden");
@@ -10921,7 +10940,6 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     await storeSet(lotKey(currentLot.id), currentLot);
     const idxEntry = lotsIndex.find(l => l.id === currentLot.id);
     if(idxEntry){ idxEntry.scanValidated = true; }
-    await storeSet(LOTS_INDEX_KEY, lotsIndex);
     toast("Scan validé et signé — prêt pour le contrôle");
   });
 
@@ -10935,7 +10953,6 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     await storeSet(lotKey(currentLot.id), currentLot);
     const idxEntry = lotsIndex.find(l => l.id === currentLot.id);
     if(idxEntry){ idxEntry.scanValidated = false; }
-    await storeSet(LOTS_INDEX_KEY, lotsIndex);
     toast("Validation annulée — vous pouvez reprendre le scan");
   });
 
@@ -10962,7 +10979,6 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     await storeSet(lotKey(currentLot.id), currentLot);
     const idxEntry = lotsIndex.find(l => l.id === currentLot.id);
     if(idxEntry){ idxEntry.chauffeur = chauffeur; idxEntry.date = date; }
-    await storeSet(LOTS_INDEX_KEY, lotsIndex);
     toast("Informations mises à jour");
   });
 
@@ -11180,8 +11196,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   }
 
   async function refreshLotsListLive(){
-    const idx = await storeGet(LOTS_INDEX_KEY);
-    if(idx){ lotsIndex = idx; }
+    lotsIndex = await fetchAllLots();
     renderLotsList();
   }
 
@@ -11299,7 +11314,6 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     await storeSet(lotKey(detailLot.id), detailLot);
     const idxEntry = lotsIndex.find(l => l.id === detailLot.id);
     if(idxEntry) idxEntry.status = detailLot.finalStatus;
-    await storeSet(LOTS_INDEX_KEY, lotsIndex);
     toast(detailLot.finalStatus === "complet" ? "Lot validé complet" : "Lot clôturé avec anomalies");
   }
 
