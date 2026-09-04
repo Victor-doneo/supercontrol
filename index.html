@@ -125,6 +125,7 @@
   .badge-open{background:var(--panel-alt);color:var(--text-dim);border:1px solid var(--line);}
   .badge-ok{background:var(--success-dim);color:var(--success);}
   .badge-issue{background:var(--danger-dim);color:var(--danger);}
+  .badge-ready{background:var(--accent-dim);color:var(--accent);}
 
   .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--text-dim);font-size:13px;
     background:none;border:none;cursor:pointer;padding:4px 0;margin-bottom:10px;}
@@ -242,6 +243,11 @@
           <h2 style="margin:0;color:var(--text-dim);">🔒 Ce lot est clôturé — lecture seule. Passez par Contrôle pour consulter les anomalies, ou choisissez un autre lot.</h2>
         </div>
 
+        <div class="card hidden" id="scanValidatedNotice" style="background:var(--success-dim);">
+          <h2 style="margin:0 0 12px 0;color:var(--success);">✅ Scan validé — ce lot est prêt pour le contrôle</h2>
+          <button class="btn btn-ghost" id="undoValidateScanBtn">Annuler la validation</button>
+        </div>
+
         <div class="card" id="scanCard">
           <div class="scan-box" id="scanBox">
             <video id="video" playsinline muted></video>
@@ -264,6 +270,10 @@
         <div class="manifest">
           <div class="manifest-title"><span>Articles reçus</span><span id="totalCount">0</span></div>
           <div id="itemsList"></div>
+        </div>
+
+        <div class="card" id="validateScanCard" style="margin-top:14px;">
+          <button class="btn btn-success" id="validateScanBtn">✓ Valider — Scan terminé</button>
         </div>
       </div>
     </div>
@@ -10691,7 +10701,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           <div class="who">${escapeHtml(l.chauffeur)}</div>
           <div class="when">${fmtDate(l.date)}</div>
         </div>
-        ${statusBadge(l.status)}
+        ${statusBadge(l.status, l.scanValidated)}
       </div>
     `).join("");
     wrap.querySelectorAll(".lot-card-compact").forEach(card => {
@@ -10738,12 +10748,13 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const lot = {
       id, chauffeur, date, createdAt: Date.now(),
       finalStatus: null, // null | 'complet' | 'anomalies'
+      scanValidated: false,
       items: [], anomalies: []
     };
     const ok = await storeSet(lotKey(id), lot);
     if(!ok){ toast("Erreur de sauvegarde, réessayez"); return; }
 
-    lotsIndex.unshift({id, chauffeur, date, createdAt: lot.createdAt, status: null});
+    lotsIndex.unshift({id, chauffeur, date, createdAt: lot.createdAt, status: null, scanValidated: false});
     await storeSet(LOTS_INDEX_KEY, lotsIndex);
 
     activeLotId = id;
@@ -10781,14 +10792,43 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   }
 
   function applyLotLockState(){
-    const locked = !!(currentLot && currentLot.finalStatus);
-    $("lockedNotice").classList.toggle("hidden", !locked);
-    $("editLotLink").classList.toggle("hidden", locked);
-    $("deleteLotLink").classList.toggle("hidden", locked);
-    $("scanCard").classList.toggle("hidden", locked);
-    $("manualEntryCard").classList.toggle("hidden", locked);
-    if(locked) stopCamera();
+    const hardLocked = !!(currentLot && currentLot.finalStatus);
+    const softLocked = !!(currentLot && currentLot.scanValidated && !hardLocked);
+    const anyLocked = hardLocked || softLocked;
+
+    $("lockedNotice").classList.toggle("hidden", !hardLocked);
+    $("scanValidatedNotice").classList.toggle("hidden", !softLocked);
+    $("validateScanCard").classList.toggle("hidden", anyLocked);
+
+    $("editLotLink").classList.toggle("hidden", hardLocked);
+    $("deleteLotLink").classList.toggle("hidden", hardLocked);
+    $("scanCard").classList.toggle("hidden", anyLocked);
+    $("manualEntryCard").classList.toggle("hidden", anyLocked);
+    if(anyLocked) stopCamera();
   }
+
+  $("validateScanBtn").addEventListener("click", async () => {
+    if(!currentLot || currentLot.finalStatus) return;
+    if(!currentLot.items.length && !confirm("Aucun article n'a été scanné dans ce lot. Valider quand même ?")) return;
+    currentLot.scanValidated = true;
+    applyLotLockState();
+    await storeSet(lotKey(currentLot.id), currentLot);
+    const idxEntry = lotsIndex.find(l => l.id === currentLot.id);
+    if(idxEntry){ idxEntry.scanValidated = true; }
+    await storeSet(LOTS_INDEX_KEY, lotsIndex);
+    toast("Scan validé — prêt pour le contrôle");
+  });
+
+  $("undoValidateScanBtn").addEventListener("click", async () => {
+    if(!currentLot || currentLot.finalStatus) return;
+    currentLot.scanValidated = false;
+    applyLotLockState();
+    await storeSet(lotKey(currentLot.id), currentLot);
+    const idxEntry = lotsIndex.find(l => l.id === currentLot.id);
+    if(idxEntry){ idxEntry.scanValidated = false; }
+    await storeSet(LOTS_INDEX_KEY, lotsIndex);
+    toast("Validation annulée — vous pouvez reprendre le scan");
+  });
 
   $("deleteLotLink").addEventListener("click", async () => {
     if(!currentLot || currentLot.finalStatus) return;
@@ -10864,7 +10904,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 
   async function addReference(rawRef){
     if(!currentLot) return "invalid";
-    if(currentLot.finalStatus) return "locked";
+    if(currentLot.finalStatus || currentLot.scanValidated) return "locked";
     const status = addRefToItems(currentLot, rawRef);
     if(status === "added"){
       renderItems();
@@ -10889,7 +10929,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   function renderItems(){
     const list = $("itemsList");
     const items = currentLot ? currentLot.items : [];
-    const locked = !!(currentLot && currentLot.finalStatus);
+    const locked = !!(currentLot && (currentLot.finalStatus || currentLot.scanValidated));
     $("totalCount").textContent = items.length;
     if(items.length === 0){
       list.innerHTML = '<div class="empty">Aucun article scanné pour l\'instant</div>';
@@ -10912,7 +10952,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   }
 
   async function removeScannedItem(ref){
-    if(!currentLot || currentLot.finalStatus) return;
+    if(!currentLot || currentLot.finalStatus || currentLot.scanValidated) return;
     if(!confirm("Retirer « " + ref + " » de ce lot ?")) return;
     currentLot.items = currentLot.items.filter(i => i.ref !== ref);
     renderItems();
@@ -11018,10 +11058,11 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   }
 
   // ---------- Control tab: lots list ----------
-  function statusBadge(status){
+  function statusBadge(status, scanValidated){
     if(status === "complet") return '<span class="badge badge-ok">Complet</span>';
     if(status === "anomalies") return '<span class="badge badge-issue">Anomalies</span>';
-    return '<span class="badge badge-open">À contrôler</span>';
+    if(scanValidated) return '<span class="badge badge-ready">Prêt à contrôler</span>';
+    return '<span class="badge badge-open">Scan en cours</span>';
   }
 
   function renderLotsList(){
@@ -11038,7 +11079,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
             <div class="who">${escapeHtml(l.chauffeur)}</div>
             <div class="when">${fmtDate(l.date)}</div>
           </div>
-          ${statusBadge(l.status)}
+          ${statusBadge(l.status, l.scanValidated)}
         </div>
       </div>
     `).join("");
@@ -11076,7 +11117,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const lot = detailLot;
     $("detWho").textContent = lot.chauffeur;
     $("detWhen").textContent = fmtDate(lot.date);
-    $("detBadge").outerHTML = statusBadge(lot.finalStatus).replace('class="badge', 'id="detBadge" class="badge');
+    $("detBadge").outerHTML = statusBadge(lot.finalStatus, lot.scanValidated).replace('class="badge', 'id="detBadge" class="badge');
 
     const items = $("detItemsList");
     if(!lot.items.length){
