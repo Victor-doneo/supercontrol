@@ -323,7 +323,10 @@
         </div>
 
         <div class="card">
-          <h2>Articles reçus</h2>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <h2 style="margin:0;">Articles reçus</h2>
+            <button class="btn btn-ghost" id="exportCsvBtn" style="width:auto;padding:6px 12px;font-size:12px;">⬇ Exporter CSV</button>
+          </div>
           <div id="detItemsList"></div>
         </div>
 
@@ -11269,6 +11272,36 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     $("anomalyFormCard").classList.toggle("hidden", locked);
     $("finalizeBtnRow").classList.toggle("hidden", locked);
   }
+
+  function exportLotCSV(lot){
+    if(!lot || !lot.items.length){ toast("Aucun article à exporter"); return; }
+    const rows = [["Référence", "Date du scan", "Heure du scan"]];
+    lot.items.forEach(i => {
+      const d = new Date(i.lastScan);
+      const dateStr = d.toLocaleDateString("fr-FR");
+      const timeStr = d.toLocaleTimeString("fr-FR");
+      rows.push([i.ref, dateStr, timeStr]);
+    });
+    const csvContent = rows.map(r => r.map(cell => {
+      const s = String(cell);
+      return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }).join(";")).join("\r\n");
+
+    const blob = new Blob(["\uFEFF" + csvContent], {type: "text/csv;charset=utf-8;"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const safeChauffeur = (lot.chauffeur || "lot").replace(/[^a-zA-Z0-9_-]+/g, "_");
+    a.href = url;
+    a.download = `lot_${safeChauffeur}_${lot.date || ""}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  $("exportCsvBtn").addEventListener("click", () => {
+    if(detailLot) exportLotCSV(detailLot);
+  });
 
   $("addAnomalyBtn").addEventListener("click", async () => {
     if(!detailLot || detailLot.finalStatus) return;
