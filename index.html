@@ -331,7 +331,8 @@
         </div>
 
         <div class="card hidden" id="detLockedNotice" style="background:var(--panel-alt);">
-          <h2 style="margin:0;color:var(--text-dim);">🔒 Ce lot est déjà clôturé — plus aucune modification possible ici.</h2>
+          <h2 style="margin:0 0 12px 0;color:var(--text-dim);">🔒 Ce lot est déjà clôturé — plus aucune modification possible ici.</h2>
+          <button class="btn btn-ghost" id="reopenLotBtn">↻ Rouvrir ce lot</button>
         </div>
 
         <div class="card" id="anomalyFormCard">
@@ -11301,6 +11302,17 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 
   $("exportCsvBtn").addEventListener("click", () => {
     if(detailLot) exportLotCSV(detailLot);
+  });
+
+  $("reopenLotBtn").addEventListener("click", async () => {
+    if(!detailLot || !detailLot.finalStatus) return;
+    if(!confirm("Rouvrir ce lot ? Il redeviendra modifiable (anomalies, clôture) comme avant.")) return;
+    detailLot.finalStatus = null;
+    renderLotDetail();
+    await storeSet(lotKey(detailLot.id), detailLot);
+    const idxEntry = lotsIndex.find(l => l.id === detailLot.id);
+    if(idxEntry) idxEntry.status = null;
+    toast("Lot rouvert");
   });
 
   $("addAnomalyBtn").addEventListener("click", async () => {
