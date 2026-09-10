@@ -11259,13 +11259,25 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       anCard.classList.add("hidden");
     } else {
       anCard.classList.remove("hidden");
+      const anLocked = !!lot.finalStatus;
       anList.innerHTML = lot.anomalies.map(a => `
         <div class="anomaly-row">
-          <div class="a-top"><span>${a.type === "manquant" ? "Manquant" : "Unité inattendue"}</span><span>${fmtTime(a.createdAt)}</span></div>
+          <div class="a-top">
+            <span>${a.type === "manquant" ? "Manquant" : "Unité inattendue"}</span>
+            <span style="display:flex;align-items:center;gap:8px;">
+              <span>${fmtTime(a.createdAt)}</span>
+              ${anLocked ? "" : `<button class="item-delete-btn" data-id="${a.id}" title="Retirer cette anomalie" style="width:22px;height:22px;font-size:12px;">✕</button>`}
+            </span>
+          </div>
           <div class="a-ref">${escapeHtml(a.ref)} ${a.qty && a.type === "manquant" ? "· qté " + a.qty : ""}</div>
           ${a.note ? `<div class="a-note">${escapeHtml(a.note)}</div>` : ""}
         </div>
       `).join("");
+      if(!anLocked){
+        anList.querySelectorAll(".item-delete-btn").forEach(btn => {
+          btn.addEventListener("click", () => removeAnomaly(btn.dataset.id));
+        });
+      }
     }
 
     const locked = !!lot.finalStatus;
@@ -11314,6 +11326,15 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     if(idxEntry) idxEntry.status = null;
     toast("Lot rouvert");
   });
+
+  async function removeAnomaly(id){
+    if(!detailLot || detailLot.finalStatus) return;
+    if(!confirm("Retirer cette anomalie ?")) return;
+    detailLot.anomalies = detailLot.anomalies.filter(a => a.id !== id);
+    renderLotDetail();
+    const ok = await storeSet(lotKey(detailLot.id), detailLot);
+    if(!ok) toast("Non sauvegardé — vérifiez la connexion");
+  }
 
   $("addAnomalyBtn").addEventListener("click", async () => {
     if(!detailLot || detailLot.finalStatus) return;
