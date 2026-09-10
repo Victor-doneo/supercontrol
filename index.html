@@ -11240,6 +11240,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     }
 
     const items = $("detItemsList");
+    const itemsLocked = !!lot.finalStatus;
     if(!lot.items.length){
       items.innerHTML = '<div class="empty">Aucun article scanné dans ce lot</div>';
     } else {
@@ -11249,8 +11250,14 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
             <div class="item-ref">${escapeHtml(i.ref)}</div>
             <div class="item-meta">Scanné à ${fmtTime(i.lastScan)}</div>
           </div>
+          ${itemsLocked ? "" : `<button class="item-delete-btn" data-ref="${escapeHtml(i.ref)}" title="Retirer cette référence">✕</button>`}
         </div>
       `).join("");
+      if(!itemsLocked){
+        items.querySelectorAll(".item-delete-btn").forEach(btn => {
+          btn.addEventListener("click", () => removeDetItem(btn.dataset.ref));
+        });
+      }
     }
 
     const anCard = $("anomaliesCard");
@@ -11331,6 +11338,15 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     if(!detailLot || detailLot.finalStatus) return;
     if(!confirm("Retirer cette anomalie ?")) return;
     detailLot.anomalies = detailLot.anomalies.filter(a => a.id !== id);
+    renderLotDetail();
+    const ok = await storeSet(lotKey(detailLot.id), detailLot);
+    if(!ok) toast("Non sauvegardé — vérifiez la connexion");
+  }
+
+  async function removeDetItem(ref){
+    if(!detailLot || detailLot.finalStatus) return;
+    if(!confirm("Retirer « " + ref + " » de ce lot ?")) return;
+    detailLot.items = detailLot.items.filter(i => i.ref !== ref);
     renderLotDetail();
     const ok = await storeSet(lotKey(detailLot.id), detailLot);
     if(!ok) toast("Non sauvegardé — vérifiez la connexion");
