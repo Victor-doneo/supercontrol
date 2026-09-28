@@ -138,6 +138,29 @@
   .anomaly-row .a-ref{font-family:var(--mono);font-size:14px;}
   .anomaly-row .a-note{font-size:12px;color:var(--text-dim);margin-top:4px;}
 
+  .photo-strip{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}
+  .photo-thumb{position:relative;width:64px;height:64px;border-radius:8px;overflow:hidden;
+    border:1px solid var(--line);background:var(--panel-alt);cursor:pointer;flex-shrink:0;}
+  .photo-thumb img{width:100%;height:100%;object-fit:cover;display:block;}
+  .photo-thumb .photo-rm{position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:50%;
+    border:none;background:rgba(0,0,0,.65);color:#fff;font-size:11px;line-height:20px;padding:0;cursor:pointer;}
+  #photoViewer{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:100;display:flex;
+    align-items:center;justify-content:center;padding:16px;cursor:zoom-out;}
+  #photoViewer img{max-width:100%;max-height:100%;border-radius:8px;}
+
+  .search-btn{background:transparent;border:1px solid var(--line);color:var(--text);border-radius:8px;
+    padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;margin-top:10px;}
+  .search-btn:active{background:var(--panel-alt);}
+  .search-results{margin-top:10px;display:flex;flex-direction:column;gap:6px;}
+  .search-hit{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:12px;}
+  .search-hit.exact{border-color:var(--success);}
+  .search-hit .hit-title{font-weight:700;font-size:13px;margin-bottom:3px;}
+  .search-hit .hit-meta{color:var(--text-dim);}
+  .search-hit .hit-ref{font-family:var(--mono);}
+  .search-hit button{margin-top:8px;background:var(--accent);color:#1B1F24;border:none;border-radius:6px;
+    padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;}
+  .search-none{font-size:12px;color:var(--text-dim);padding:8px 0;}
+
   .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--text);color:#1B1F24;
     padding:10px 18px;border-radius:100px;font-size:13px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.35);
     opacity:0;pointer-events:none;transition:opacity .2s, transform .2s;z-index:50;}
@@ -357,6 +380,12 @@
           <div class="field">
             <label for="anNote">Note (optionnel)</label>
             <textarea id="anNote" rows="2" placeholder="Détails utiles…"></textarea>
+          </div>
+          <div class="field">
+            <label>Photos (optionnel, 5 max)</label>
+            <input id="anPhotoInput" type="file" accept="image/*" multiple style="display:none;">
+            <button type="button" class="btn btn-secondary" id="anPhotoBtn">📷 Ajouter des photos</button>
+            <div class="photo-strip" id="anPhotoPreview"></div>
           </div>
           <button class="btn btn-danger" id="addAnomalyBtn">Signaler l'anomalie</button>
         </div>
@@ -11218,6 +11247,8 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     if(!lot){ toast("Lot introuvable"); return; }
     detailLot = lot;
     controlView = "detail";
+    pendingPhotos = [];
+    renderPendingPhotos();
     $("lotsListWrap").classList.add("hidden");
     $("lotDetailWrap").classList.remove("hidden");
     renderLotDetail();
@@ -11278,6 +11309,9 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           </div>
           <div class="a-ref">${escapeHtml(a.ref)} ${a.qty && a.type === "manquant" ? "· qté " + a.qty : ""}</div>
           ${a.note ? `<div class="a-note">${escapeHtml(a.note)}</div>` : ""}
+          ${(a.photos && a.photos.length) ? `<div class="photo-strip" data-photos-for="${a.id}"></div>` : ""}
+          <button class="search-btn" data-search-id="${a.id}">🔍 Chercher dans les autres réceptions</button>
+          <div class="search-results" data-results-for="${a.id}"></div>
         </div>
       `).join("");
       if(!anLocked){
@@ -11285,6 +11319,11 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           btn.addEventListener("click", () => removeAnomaly(btn.dataset.id));
         });
       }
+      // La recherche reste toujours disponible, même sur un lot clôturé
+      anList.querySelectorAll(".search-btn").forEach(btn => {
+        btn.addEventListener("click", () => runAnomalySearch(btn.dataset.searchId));
+      });
+      lot.anomalies.forEach(a => { if(a.photos && a.photos.length) loadAnomalyPhotos(a); });
     }
 
     const locked = !!lot.finalStatus;
@@ -11334,13 +11373,203 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     toast("Lot rouvert");
   });
 
+  // ---------- Photos d'anomalie ----------
+  // Les photos sont stockées dans leurs propres lignes ("photo:<id>") pour que
+  // la fiche du lot reste légère (la recherche croisée ne les télécharge jamais).
+  const MAX_ANOMALY_PHOTOS = 5;
+  let pendingPhotos = [];        // photos choisies mais pas encore enregistrées
+  const photoCache = new Map();  // photoId -> dataURL
+
+  function compressImage(file, maxDim, quality){
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = reject;
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onerror = reject;
+        img.onload = () => {
+          const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+          const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+          const c = document.createElement("canvas");
+          c.width = w; c.height = h;
+          c.getContext("2d").drawImage(img, 0, 0, w, h);
+          resolve(c.toDataURL("image/jpeg", quality));
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function openPhotoViewer(src){
+    if(!src) return;
+    const v = document.createElement("div");
+    v.id = "photoViewer";
+    v.innerHTML = '<img alt="Photo">';
+    v.querySelector("img").src = src;
+    v.addEventListener("click", () => v.remove());
+    document.body.appendChild(v);
+  }
+
+  function renderPendingPhotos(){
+    const wrap = $("anPhotoPreview");
+    wrap.innerHTML = pendingPhotos.map((src, idx) => `
+      <div class="photo-thumb" data-idx="${idx}">
+        <img alt="Photo ${idx + 1}">
+        <button type="button" class="photo-rm" data-rm="${idx}" title="Retirer cette photo">✕</button>
+      </div>`).join("");
+    wrap.querySelectorAll(".photo-thumb").forEach(t => {
+      const idx = parseInt(t.dataset.idx, 10);
+      t.querySelector("img").src = pendingPhotos[idx];
+      t.addEventListener("click", () => openPhotoViewer(pendingPhotos[idx]));
+    });
+    wrap.querySelectorAll(".photo-rm").forEach(b => {
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        pendingPhotos.splice(parseInt(b.dataset.rm, 10), 1);
+        renderPendingPhotos();
+      });
+    });
+  }
+
+  $("anPhotoBtn").addEventListener("click", () => $("anPhotoInput").click());
+  $("anPhotoInput").addEventListener("change", async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    for(const f of files){
+      if(pendingPhotos.length >= MAX_ANOMALY_PHOTOS){ toast(MAX_ANOMALY_PHOTOS + " photos maximum par anomalie"); break; }
+      try{ pendingPhotos.push(await compressImage(f, 1280, 0.72)); }
+      catch(err){ toast("Photo illisible"); }
+    }
+    renderPendingPhotos();
+  });
+
+  async function loadAnomalyPhotos(anomaly){
+    const wrap = document.querySelector('[data-photos-for="' + anomaly.id + '"]');
+    if(!wrap) return;
+    wrap.innerHTML = anomaly.photos.map(pid =>
+      '<div class="photo-thumb" data-pid="' + pid + '"><img alt="Photo"></div>').join("");
+    for(const pid of anomaly.photos){
+      const thumb = wrap.querySelector('[data-pid="' + pid + '"]');
+      if(!thumb) continue;
+      let src = photoCache.get(pid);
+      if(!src){
+        const rec = await storeGet("photo:" + pid);
+        src = rec && rec.data;
+        if(src) photoCache.set(pid, src);
+      }
+      if(src){
+        thumb.querySelector("img").src = src;
+        thumb.addEventListener("click", () => openPhotoViewer(src));
+      } else {
+        thumb.innerHTML = '<div style="font-size:10px;color:var(--text-dim);padding:6px;">indisponible</div>';
+      }
+    }
+  }
+
+  // ---------- Recherche d'une référence dans les autres réceptions ----------
+  function normRef(s){ return String(s || "").trim().toUpperCase(); }
+
+  async function fetchLotsForSearch(){
+    const norm = (l) => ({
+      id: l.id, chauffeur: l.chauffeur, date: l.date,
+      finalStatus: l.finalStatus || null,
+      scanValidated: l.scanValidated === true || l.scanValidated === "true",
+      items: Array.isArray(l.items) ? l.items : [],
+      anomalies: Array.isArray(l.anomalies) ? l.anomalies : []
+    });
+    if(storageMode === "memory"){
+      return Object.keys(memoryStore).filter(k => k.startsWith("lot:")).map(k => norm(memoryStore[k]));
+    }
+    try{
+      // Projection légère : on ne télécharge ni les signatures ni les photos
+      const { data, error } = await sb.from("storage_kv")
+        .select("id:value->>id, chauffeur:value->>chauffeur, date:value->>date, finalStatus:value->>finalStatus, scanValidated:value->>scanValidated, items:value->items, anomalies:value->anomalies")
+        .like("key", "lot:%");
+      if(error) throw error;
+      return data.map(norm);
+    }catch(e1){
+      console.warn("projection search failed, fallback to full rows", e1);
+      try{
+        const { data, error } = await sb.from("storage_kv").select("value").like("key", "lot:%");
+        if(error) throw error;
+        return data.map(r => norm(r.value));
+      }catch(e2){
+        console.error("search fetch failed", e2);
+        return null;
+      }
+    }
+  }
+
+  async function searchRefInOtherLots(ref, excludeLotId){
+    const q = normRef(ref);
+    if(!q) return [];
+    const lots = await fetchLotsForSearch();
+    if(!lots) return null;
+    const isClose = (r) => r.length >= 6 && q.length >= 6 && (r.includes(q) || q.includes(r));
+    const hits = [];
+    lots.forEach(l => {
+      if(l.id === excludeLotId) return;
+      l.items.forEach(i => {
+        const r = normRef(i.ref);
+        if(r === q) hits.push({lot:l, where:"scan", ref:i.ref, at:i.lastScan, exact:true});
+        else if(isClose(r)) hits.push({lot:l, where:"scan", ref:i.ref, at:i.lastScan, exact:false});
+      });
+      l.anomalies.forEach(a => {
+        const r = normRef(a.ref);
+        if(r === q) hits.push({lot:l, where:"anomaly", type:a.type, ref:a.ref, at:a.createdAt, exact:true});
+        else if(isClose(r)) hits.push({lot:l, where:"anomaly", type:a.type, ref:a.ref, at:a.createdAt, exact:false});
+      });
+    });
+    hits.sort((a, b) => (b.exact - a.exact) || String(b.lot.date).localeCompare(String(a.lot.date)));
+    return hits;
+  }
+
+  async function runAnomalySearch(anomalyId){
+    if(!detailLot) return;
+    const a = detailLot.anomalies.find(x => x.id === anomalyId);
+    const box = document.querySelector('[data-results-for="' + anomalyId + '"]');
+    if(!a || !box) return;
+    box.innerHTML = '<div class="search-none">Recherche en cours…</div>';
+    const hits = await searchRefInOtherLots(a.ref, detailLot.id);
+    if(hits === null){
+      box.innerHTML = '<div class="search-none">Recherche impossible pour le moment (connexion).</div>';
+      return;
+    }
+    if(!hits.length){
+      box.innerHTML = '<div class="search-none">Aucune correspondance dans les autres réceptions à ce jour. Vous pouvez relancer la recherche plus tard.</div>';
+      return;
+    }
+    box.innerHTML = hits.map(h => {
+      const l = h.lot;
+      let title;
+      if(h.where === "scan") title = h.exact ? "✅ Trouvée dans une autre réception" : "≈ Référence proche trouvée dans une autre réception";
+      else title = (h.exact ? "⚠ Déjà signalée en anomalie" : "≈ Référence proche signalée en anomalie") +
+        " (" + (h.type === "manquant" ? "manquant" : "unité inattendue") + ")";
+      return `
+        <div class="search-hit ${h.exact ? "exact" : ""}">
+          <div class="hit-title">${title}</div>
+          <div class="hit-meta"><span class="hit-ref">${escapeHtml(h.ref)}</span></div>
+          <div class="hit-meta">Lot de <b>${escapeHtml(l.chauffeur)}</b> · ${fmtDate(l.date)}${h.at ? " · " + fmtTime(h.at) : ""} · ${statusBadge(l.finalStatus, l.scanValidated)}</div>
+          <button type="button" data-open-lot="${l.id}">Ouvrir ce lot</button>
+        </div>`;
+    }).join("");
+    box.querySelectorAll("[data-open-lot]").forEach(b => {
+      b.addEventListener("click", () => { openLotDetail(b.dataset.openLot); window.scrollTo({top:0, behavior:"smooth"}); });
+    });
+  }
+
   async function removeAnomaly(id){
     if(!detailLot || detailLot.finalStatus) return;
     if(!confirm("Retirer cette anomalie ?")) return;
+    const target = detailLot.anomalies.find(a => a.id === id);
     detailLot.anomalies = detailLot.anomalies.filter(a => a.id !== id);
     renderLotDetail();
     const ok = await storeSet(lotKey(detailLot.id), detailLot);
     if(!ok) toast("Non sauvegardé — vérifiez la connexion");
+    if(target && target.photos){
+      for(const pid of target.photos){ photoCache.delete(pid); await storeDelete("photo:" + pid); }
+    }
   }
 
   async function removeDetItem(ref){
@@ -11360,14 +11589,28 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const note = $("anNote").value.trim();
     if(!ref){ toast("Indiquez une référence"); return; }
 
-    detailLot.anomalies.unshift({
+    const addBtn = $("addAnomalyBtn");
+    addBtn.disabled = true;
+    const photoIds = [];
+    for(const dataUrl of pendingPhotos){
+      const pid = "ph_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+      await storeSet("photo:" + pid, {data: dataUrl, lotId: detailLot.id, createdAt: Date.now()});
+      photoCache.set(pid, dataUrl);
+      photoIds.push(pid);
+    }
+    const anomaly = {
       id: "an_" + Date.now().toString(36),
       type, ref, qty, note, createdAt: Date.now()
-    });
+    };
+    if(photoIds.length) anomaly.photos = photoIds;
+    detailLot.anomalies.unshift(anomaly);
+    pendingPhotos = [];
+    renderPendingPhotos();
     renderLotDetail();
     $("anRef").value = ""; $("anQty").value = "1"; $("anNote").value = "";
 
     const ok = await storeSet(lotKey(detailLot.id), detailLot);
+    addBtn.disabled = false;
     if(!ok) toast("Non sauvegardé — vérifiez la connexion");
     else toast("Anomalie enregistrée");
   });
