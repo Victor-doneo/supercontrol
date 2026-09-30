@@ -226,10 +226,6 @@
           <label for="inChauffeur">Chauffeur</label>
           <input id="inChauffeur" type="text" placeholder="Nom du chauffeur">
         </div>
-        <div class="field">
-          <label for="inDate">Date du lot</label>
-          <input id="inDate" type="date">
-        </div>
         <button class="btn btn-primary" id="startLotBtn">Démarrer la réception</button>
       </div>
 
@@ -10752,7 +10748,6 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   }
 
   async function init(){
-    $("inDate").value = todayStr();
     lotsIndex = await fetchAllLots();
     if(storageMode === "remote"){ $("syncLabel").textContent = "synchronisé"; }
     renderLotsList();
@@ -10825,9 +10820,8 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   // ---------- Start / switch lot ----------
   $("startLotBtn").addEventListener("click", async () => {
     const chauffeur = $("inChauffeur").value.trim();
-    const date = $("inDate").value;
+    const date = todayStr();
     if(!chauffeur){ toast("Indiquez le nom du chauffeur"); return; }
-    if(!date){ toast("Indiquez une date"); return; }
 
     const id = "lot_" + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
     const lot = {
@@ -11482,22 +11476,15 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       return Object.keys(memoryStore).filter(k => k.startsWith("lot:")).map(k => norm(memoryStore[k]));
     }
     try{
-      // Projection légère : on ne télécharge ni les signatures ni les photos
-      const { data, error } = await sb.from("storage_kv")
-        .select("id:value->>id, chauffeur:value->>chauffeur, date:value->>date, finalStatus:value->>finalStatus, scanValidated:value->>scanValidated, items:value->items, anomalies:value->anomalies")
-        .like("key", "lot:%");
+      // On relit la fiche complète de chaque lot (même méthode que fetchAllLots) :
+      // c'est un peu plus lourd qu'une projection, mais fiable à 100% — items et
+      // anomalies restent de vrais tableaux JS, jamais du JSON mal interprété.
+      const { data, error } = await sb.from("storage_kv").select("value").like("key", "lot:%");
       if(error) throw error;
-      return data.map(norm);
-    }catch(e1){
-      console.warn("projection search failed, fallback to full rows", e1);
-      try{
-        const { data, error } = await sb.from("storage_kv").select("value").like("key", "lot:%");
-        if(error) throw error;
-        return data.map(r => norm(r.value));
-      }catch(e2){
-        console.error("search fetch failed", e2);
-        return null;
-      }
+      return data.map(r => norm(r.value));
+    }catch(e){
+      console.error("search fetch failed", e);
+      return null;
     }
   }
 
@@ -11584,7 +11571,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   $("addAnomalyBtn").addEventListener("click", async () => {
     if(!detailLot || detailLot.finalStatus) return;
     const type = $("anType").value;
-    const ref = $("anRef").value.trim();
+    const ref = extractReference($("anRef").value.trim());
     const qty = parseInt($("anQty").value, 10) || 1;
     const note = $("anNote").value.trim();
     if(!ref){ toast("Indiquez une référence"); return; }
